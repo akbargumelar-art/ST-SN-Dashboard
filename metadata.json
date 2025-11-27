@@ -1,0 +1,5 @@
+{
+  "name": "SN Manager",
+  "description": "A comprehensive Serial Number management system with Role-Based Access Control, QR Code generation, and AI-powered daily insights.",
+  "requestFramePermissions": []
+}
