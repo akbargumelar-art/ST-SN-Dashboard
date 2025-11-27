@@ -11,13 +11,17 @@ const pool = mysql.createPool({
   database: process.env.DB_NAME || 'sn_manager',
   waitForConnections: true,
   connectionLimit: 10,
-  queueLimit: 0
+  queueLimit: 0,
+  // Ensure date strings are treated as strings to match VARCHAR column types if needed, 
+  // or handle dates correctly.
+  dateStrings: true 
 });
 
 // Test connection
 pool.getConnection((err, connection) => {
   if (err) {
     console.error('Database connection failed:', err.code);
+    console.error('Please ensure your MySQL server is running and credentials in .env are correct.');
   } else {
     console.log('Connected to MySQL Database');
     connection.release();
