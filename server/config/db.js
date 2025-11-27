@@ -9,6 +9,7 @@ const pool = mysql.createPool({
   user: process.env.DB_USER || 'root',
   password: process.env.DB_PASSWORD || '',
   database: process.env.DB_NAME || 'sn_manager',
+  port: process.env.DB_PORT || 3306, // Critical: Read port from .env
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
@@ -19,9 +20,10 @@ const pool = mysql.createPool({
 pool.getConnection((err, connection) => {
   if (err) {
     console.error('Database connection failed:', err.code);
-    console.error('Please ensure your MySQL server is running and credentials in .env are correct.');
+    console.error('Error Details:', err.message);
+    console.error('Please ensure your MySQL server is running, port is correct, and IP is whitelisted.');
   } else {
-    console.log('Connected to MySQL Database');
+    console.log('Connected to MySQL Database successfully!');
     connection.release();
   }
 });
