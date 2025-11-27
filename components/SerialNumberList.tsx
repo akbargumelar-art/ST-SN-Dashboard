@@ -23,7 +23,7 @@ const SerialNumberList: React.FC<SNListProps> = ({ data, user, refreshData }) =>
     return matchesSearch && matchesStatus;
   });
 
-  const handleStatusChange = (id: string, newStatus: SNStatus) => {
+  const handleStatusChange = (id: number, newStatus: SNStatus) => {
     updateSerialNumberStatus(id, newStatus);
     refreshData();
   };

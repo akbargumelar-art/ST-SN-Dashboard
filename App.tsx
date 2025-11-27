@@ -10,27 +10,34 @@ import Sellthru from './components/Sellthru';
 import TopupSaldo from './components/TopupSaldo';
 import BucketTransaksi from './components/BucketTransaksi';
 import ListSN from './components/ListSN';
-import { User, SerialNumber, UserRole } from './types';
-import { initStorage, getSerialNumbers } from './services/storage';
+import { User, SerialNumber } from './types';
+import { getSerialNumbers } from './services/storage';
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
   const [currentView, setCurrentView] = useState('home');
   const [data, setData] = useState<SerialNumber[]>([]);
 
-  // Initialize App
   useEffect(() => {
-    initStorage();
-    loadData();
-    
     const savedUser = localStorage.getItem('sn_user_session');
     if (savedUser) {
       setUser(JSON.parse(savedUser));
     }
   }, []);
 
-  const loadData = () => {
-    setData(getSerialNumbers());
+  useEffect(() => {
+    if (user) {
+        loadData();
+    }
+  }, [user]);
+
+  const loadData = async () => {
+    try {
+        const res = await getSerialNumbers();
+        setData(res);
+    } catch (error) {
+        console.error("Failed to load SN data", error);
+    }
   };
 
   const handleLogin = (loggedInUser: User) => {
@@ -42,6 +49,7 @@ const App: React.FC = () => {
   const handleLogout = () => {
     setUser(null);
     localStorage.removeItem('sn_user_session');
+    localStorage.removeItem('sn_token');
     setCurrentView('home');
   };
 
@@ -62,7 +70,7 @@ const App: React.FC = () => {
       case 'bucket':
         return <BucketTransaksi user={user} />;
       case 'listsn':
-        return <ListSN user={user} data={data} />; // Data prop kept for compatibility but ignored inside
+        return <ListSN user={user} data={data} />; 
       case 'input':
         return <InputForm onSuccess={() => {
           loadData();

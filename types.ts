@@ -1,5 +1,4 @@
 
-
 export enum UserRole {
   SUPER_ADMIN = 'super_admin',
   ADMIN = 'admin',
@@ -21,29 +20,27 @@ export enum SNStatus {
 }
 
 export interface SerialNumber {
-  id: string;
+  id: number;
   sn_number: string;
   flag: string;
   warehouse: string;
   sub_category: string;
   product_name: string;
-  expired_date: string; // ISO Date string
+  expired_date: string;
   status: SNStatus;
-  created_at: string; // ISO Date string
+  created_at: string;
   qr_code_url: string;
-  salesforce_name: string; // Changed from ID to string to match CSV data
+  salesforce_name: string;
   tap: string;
-  price?: number; // Added for Sellthru report
-  transaction_id?: string; // New field
-  no_rs?: string; // New field for Number RS
-  
-  // New Fields for Success Status
+  price?: number;
+  transaction_id?: string;
+  no_rs?: string;
   id_digipos?: string;
   nama_outlet?: string;
 }
 
 export interface AdistiTransaction {
-  id: string;
+  id: number;
   created_at: string;
   sn_number: string;
   warehouse: string;
@@ -63,7 +60,7 @@ export interface DashboardStats {
 }
 
 export interface TopupTransaction {
-  id: string;
+  id: number;
   transaction_date: string;
   sender: string;
   receiver: string;

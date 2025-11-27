@@ -12,9 +12,7 @@ const pool = mysql.createPool({
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
-  // Ensure date strings are treated as strings to match VARCHAR column types if needed, 
-  // or handle dates correctly.
-  dateStrings: true 
+  dateStrings: true // Handle dates as strings to match VARCHAR/DATE columns easily
 });
 
 // Test connection
