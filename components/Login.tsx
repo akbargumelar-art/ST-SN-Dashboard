@@ -22,7 +22,15 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
         localStorage.setItem('sn_token', token);
         onLogin(user);
     } catch (err: any) {
-        setError(err.message || 'Login failed');
+        // Translate error messages to user-friendly Indonesian
+        const msg = err.message || '';
+        if (msg.includes('User not found') || msg.includes('Invalid password') || msg.includes('Login failed')) {
+            setError('Username atau Password salah. Silakan periksa kembali.');
+        } else if (msg.includes('Failed to fetch') || msg.includes('Network request failed')) {
+            setError('Gagal terhubung ke server. Pastikan koneksi internet lancar atau hubungi IT Support.');
+        } else {
+            setError('Terjadi kesalahan sistem. Silakan coba lagi nanti.');
+        }
     } finally {
         setLoading(false);
     }
@@ -39,7 +47,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
 
         <form onSubmit={handleLogin} className="p-8 space-y-6">
           {error && (
-            <div className="bg-red-50 text-red-600 text-sm p-3 rounded-lg text-center border border-red-100 font-medium">
+            <div className="bg-red-50 text-red-600 text-sm p-3 rounded-lg text-center border border-red-100 font-medium animate-pulse">
               {error}
             </div>
           )}
