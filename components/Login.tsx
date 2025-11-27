@@ -28,27 +28,13 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
     }
   };
 
-  const loginAs = async (u: string) => {
-    setUsername(u);
-    setLoading(true);
-    try {
-        // Default password for demo
-        const { user, token } = await login(u, '123456');
-        localStorage.setItem('sn_token', token);
-        onLogin(user);
-    } catch (err: any) {
-        setError('Login failed: ' + err.message);
-        setLoading(false);
-    }
-  };
-
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-100 p-4 font-sans">
       <div className="max-w-md w-full bg-white rounded-2xl shadow-2xl border border-slate-100 overflow-hidden">
         <div className="bg-gradient-to-r from-red-700 to-red-600 p-8 text-center relative overflow-hidden">
           <div className="absolute -top-10 -right-10 w-32 h-32 bg-white/10 rounded-full blur-2xl"></div>
-          <h1 className="text-3xl font-bold text-white mb-2 tracking-tight relative z-10">SN ST Monitoring</h1>
-          <p className="text-red-100 text-sm relative z-10">Data SN ST Harian Salesforce</p>
+          <h1 className="text-3xl font-bold text-white mb-2 tracking-tight relative z-10">SN Manager</h1>
+          <p className="text-red-100 text-sm relative z-10">Sistem Manajemen Data & Laporan</p>
         </div>
 
         <form onSubmit={handleLogin} className="p-8 space-y-6">
@@ -99,15 +85,8 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
             )}
           </button>
           
-          <div className="text-center text-xs text-slate-500 mt-6">
-            <p className="font-semibold mb-2 text-black">Akun Demo (Pass: 123456):</p>
-            <div className="flex flex-wrap justify-center gap-2 mb-2">
-              <button type="button" onClick={() => loginAs('superadmin')} className="bg-red-800 text-white px-3 py-1 rounded border border-red-900">superadmin</button>
-            </div>
-            <div className="flex flex-wrap justify-center gap-2">
-              <button type="button" onClick={() => loginAs('admin')} className="bg-slate-200 text-black px-3 py-1 rounded">admin</button>
-              <button type="button" onClick={() => loginAs('sales1')} className="bg-slate-200 text-black px-3 py-1 rounded">sales1</button>
-            </div>
+          <div className="text-center text-xs text-slate-400 mt-6">
+            <p>&copy; {new Date().getFullYear()} ABK Cloud System</p>
           </div>
         </form>
       </div>
