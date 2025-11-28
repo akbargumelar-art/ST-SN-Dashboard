@@ -1,3 +1,4 @@
+
 const express = require('express');
 const cors = require('cors');
 const db = require('./config/db');
@@ -20,6 +21,19 @@ app.use(express.urlencoded({ limit: '100mb', extended: true }));
 // Serve Static Files (Frontend Production Build)
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Middleware Verifikasi Token
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  if (!token) return res.sendStatus(401);
+
+  jwt.verify(token, SECRET_KEY, (err, user) => {
+    if (err) return res.sendStatus(403);
+    req.user = user;
+    next();
+  });
+};
+
 // --- ROUTES ---
 
 // 1. AUTH LOGIN
@@ -41,20 +55,43 @@ app.post('/api/login', async (req, res) => {
 
     if (!validPass) return res.status(401).json({ message: 'Invalid password' });
 
+    // Check force change password logic (if input password is default '123456')
+    const isDefaultPassword = password === '123456';
+
     const token = jwt.sign({ id: user.id, role: user.role }, SECRET_KEY, { expiresIn: '24h' });
+    
     res.json({ 
         token, 
         user: { 
             id: user.id, 
             username: user.username, 
             role: user.role, 
-            name: user.name 
+            name: user.name,
+            mustChangePassword: isDefaultPassword
         } 
     });
   } catch (err) {
     console.error('Login Error:', err);
     res.status(500).json({ error: 'Server error during login' });
   }
+});
+
+// Change Password Route
+app.post('/api/change-password', authenticateToken, async (req, res) => {
+    const { newPassword } = req.body;
+    const userId = req.user.id;
+
+    if (!newPassword || newPassword.length < 6) {
+        return res.status(400).json({ message: 'Password minimal 6 karakter' });
+    }
+
+    try {
+        const hashedPassword = await bcrypt.hash(newPassword, 10);
+        await db.query('UPDATE users SET password = ? WHERE id = ?', [hashedPassword, userId]);
+        res.json({ message: 'Password berhasil diubah' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // 2. REPORT SN (MASTER)

@@ -1,3 +1,4 @@
+
 import { SerialNumber, SNStatus, User, TopupTransaction, AdistiTransaction } from '../types';
 
 const API_URL = '/api';
@@ -20,6 +21,19 @@ export const login = async (username: string, password: string): Promise<{user: 
     if (!res.ok) {
         const err = await res.json();
         throw new Error(err.message || 'Login failed');
+    }
+    return res.json();
+};
+
+export const changeMyPassword = async (newPassword: string) => {
+    const res = await fetch(`${API_URL}/change-password`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ newPassword })
+    });
+    if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.message || 'Gagal mengubah password');
     }
     return res.json();
 };

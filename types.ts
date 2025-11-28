@@ -11,6 +11,7 @@ export interface User {
   username: string;
   role: UserRole;
   name: string;
+  mustChangePassword?: boolean;
 }
 
 export enum SNStatus {

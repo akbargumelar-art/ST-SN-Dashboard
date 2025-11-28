@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { HashRouter } from 'react-router-dom';
 import Layout from './components/Layout';
 import Login from './components/Login';
 import Dashboard from './components/Dashboard';
@@ -10,6 +9,7 @@ import Sellthru from './components/Sellthru';
 import TopupSaldo from './components/TopupSaldo';
 import BucketTransaksi from './components/BucketTransaksi';
 import ListSN from './components/ListSN';
+import ForceChangePassword from './components/ForceChangePassword';
 import { User, SerialNumber } from './types';
 import { getSerialNumbers } from './services/storage';
 
@@ -26,7 +26,7 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    if (user) {
+    if (user && !user.mustChangePassword) {
         loadData();
     }
   }, [user]);
@@ -53,8 +53,21 @@ const App: React.FC = () => {
     setCurrentView('home');
   };
 
+  const handlePasswordChanged = () => {
+    if (user) {
+        const updatedUser = { ...user, mustChangePassword: false };
+        setUser(updatedUser);
+        localStorage.setItem('sn_user_session', JSON.stringify(updatedUser));
+        loadData();
+    }
+  };
+
   if (!user) {
     return <Login onLogin={handleLogin} />;
+  }
+
+  if (user.mustChangePassword) {
+    return <ForceChangePassword onSuccess={handlePasswordChanged} />;
   }
 
   const renderView = () => {
@@ -84,16 +97,14 @@ const App: React.FC = () => {
   };
 
   return (
-    <HashRouter>
-      <Layout 
-        user={user} 
-        onLogout={handleLogout}
-        currentView={currentView}
-        setCurrentView={setCurrentView}
-      >
-        {renderView()}
-      </Layout>
-    </HashRouter>
+    <Layout 
+      user={user} 
+      onLogout={handleLogout}
+      currentView={currentView}
+      setCurrentView={setCurrentView}
+    >
+      {renderView()}
+    </Layout>
   );
 };
 
