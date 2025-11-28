@@ -21,7 +21,13 @@ const App: React.FC = () => {
   useEffect(() => {
     const savedUser = localStorage.getItem('sn_user_session');
     if (savedUser) {
-      setUser(JSON.parse(savedUser));
+      try {
+        const parsedUser = JSON.parse(savedUser);
+        console.log("[App Init] User Loaded:", parsedUser.username, "MustChangePass:", parsedUser.mustChangePassword);
+        setUser(parsedUser);
+      } catch (e) {
+        localStorage.removeItem('sn_user_session');
+      }
     }
   }, []);
 
@@ -41,6 +47,7 @@ const App: React.FC = () => {
   };
 
   const handleLogin = (loggedInUser: User) => {
+    console.log("[Login Handler] Received User:", loggedInUser);
     setUser(loggedInUser);
     localStorage.setItem('sn_user_session', JSON.stringify(loggedInUser));
     setCurrentView('home');
@@ -54,6 +61,7 @@ const App: React.FC = () => {
   };
 
   const handlePasswordChanged = () => {
+    console.log("[Password Changed] Updating state...");
     if (user) {
         const updatedUser = { ...user, mustChangePassword: false };
         setUser(updatedUser);
@@ -67,6 +75,7 @@ const App: React.FC = () => {
   }
 
   if (user.mustChangePassword) {
+    console.log("[Block UI] Force Change Password Active");
     return <ForceChangePassword onSuccess={handlePasswordChanged} />;
   }
 

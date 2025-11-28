@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { User, UserRole } from '../types';
 import { getUsers, addUser, updateUser, deleteUser } from '../services/storage';
-import { Edit, Trash2, Save, X, UserPlus } from 'lucide-react';
+import { Edit, Trash2, Save, X, UserPlus, Info } from 'lucide-react';
 
 const UserManagement: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
@@ -135,6 +135,14 @@ const UserManagement: React.FC = () => {
               <button onClick={handleCloseModal} className="text-slate-400 hover:text-red-600 transition-colors"><X size={24} /></button>
             </div>
             <form onSubmit={handleSubmit} className="p-6 space-y-4">
+              
+              {!editingUser && (
+                <div className="bg-blue-50 text-blue-700 p-3 rounded-lg flex items-start gap-2 text-sm border border-blue-100">
+                    <Info size={16} className="mt-0.5 flex-shrink-0" />
+                    <p>Password default user baru adalah <strong>123456</strong>. User akan diminta mengganti password saat login pertama.</p>
+                </div>
+              )}
+
               {error && <div className="bg-red-50 text-red-600 text-sm p-3 rounded-lg border border-red-100">{error}</div>}
               <div><label className="block text-sm font-bold text-slate-700 mb-1">Username</label><input type="text" value={username} onChange={(e) => setUsername(e.target.value)} className="w-full px-4 py-3 rounded-lg border border-slate-300 outline-none" placeholder="Username" disabled={!!editingUser} /></div>
               <div><label className="block text-sm font-bold text-slate-700 mb-1">Nama Lengkap</label><input type="text" value={name} onChange={(e) => setName(e.target.value)} className="w-full px-4 py-3 rounded-lg border border-slate-300 outline-none" placeholder="Nama Lengkap" /></div>

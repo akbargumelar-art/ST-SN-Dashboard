@@ -1,4 +1,3 @@
-
 const express = require('express');
 const cors = require('cors');
 const db = require('./config/db');
@@ -39,24 +38,40 @@ const authenticateToken = (req, res, next) => {
 // 1. AUTH LOGIN
 app.post('/api/login', async (req, res) => {
   const { username, password } = req.body;
+  
+  // DEBUG LOGGING
+  console.log(`[LOGIN START] User: ${username}`);
+
   try {
     const [rows] = await db.query('SELECT * FROM users WHERE username = ?', [username]);
-    if (rows.length === 0) return res.status(401).json({ message: 'User not found' });
+    if (rows.length === 0) {
+        console.log(`[LOGIN FAIL] User not found: ${username}`);
+        return res.status(401).json({ message: 'User not found' });
+    }
 
     const user = rows[0];
     
+    // Explicit conversion to ensure safe comparison
+    const inputPassStr = String(password).trim();
+    
     let validPass = false;
-    // Support legacy/demo passwords (plain) and production passwords (hashed)
     if (user.password.startsWith('$2b$')) {
-        validPass = await bcrypt.compare(password, user.password);
+        validPass = await bcrypt.compare(inputPassStr, user.password);
     } else {
-        validPass = password === user.password;
+        // Fallback for plain text legacy passwords
+        validPass = inputPassStr === String(user.password);
     }
 
-    if (!validPass) return res.status(401).json({ message: 'Invalid password' });
+    if (!validPass) {
+        console.log(`[LOGIN FAIL] Invalid password for ${username}`);
+        return res.status(401).json({ message: 'Invalid password' });
+    }
 
-    // Check force change password logic (if input password is default '123456')
-    const isDefaultPassword = password === '123456';
+    // CHECK FORCE CHANGE PASSWORD (STRICT)
+    // Directly check against the string '123456'
+    const isDefaultPassword = (inputPassStr === '123456');
+
+    console.log(`[LOGIN SUCCESS] User: ${username}, Role: ${user.role}, IsDefaultPass: ${isDefaultPassword}`);
 
     const token = jwt.sign({ id: user.id, role: user.role }, SECRET_KEY, { expiresIn: '24h' });
     
@@ -67,11 +82,11 @@ app.post('/api/login', async (req, res) => {
             username: user.username, 
             role: user.role, 
             name: user.name,
-            mustChangePassword: isDefaultPassword
+            mustChangePassword: isDefaultPassword // Send this flag explicitly
         } 
     });
   } catch (err) {
-    console.error('Login Error:', err);
+    console.error('[LOGIN ERROR]:', err);
     res.status(500).json({ error: 'Server error during login' });
   }
 });
@@ -81,6 +96,8 @@ app.post('/api/change-password', authenticateToken, async (req, res) => {
     const { newPassword } = req.body;
     const userId = req.user.id;
 
+    console.log(`[CHANGE PASS] Request for UserID: ${userId}`);
+
     if (!newPassword || newPassword.length < 6) {
         return res.status(400).json({ message: 'Password minimal 6 karakter' });
     }
@@ -88,8 +105,10 @@ app.post('/api/change-password', authenticateToken, async (req, res) => {
     try {
         const hashedPassword = await bcrypt.hash(newPassword, 10);
         await db.query('UPDATE users SET password = ? WHERE id = ?', [hashedPassword, userId]);
+        console.log(`[CHANGE PASS] Success for UserID: ${userId}`);
         res.json({ message: 'Password berhasil diubah' });
     } catch (err) {
+        console.error('[CHANGE PASS ERROR]:', err);
         res.status(500).json({ error: err.message });
     }
 });
