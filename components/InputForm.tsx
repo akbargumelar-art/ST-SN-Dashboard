@@ -18,7 +18,7 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess }) => {
   const handleDownloadTemplate = () => {
     let headers, example, filename;
 
-    // UPDATE: Header disesuaikan PERSIS dengan nama kolom Database untuk akurasi 100%
+    // UPDATE: Header disesuaikan dengan struktur Data User yang Valid
     if (uploadMode === 'new') {
       // Database: sn_number, flag, warehouse, sub_category, product_name, salesforce_name, tap, no_rs
       headers = "sn_number;flag;product_name;sub_category;warehouse;salesforce_name;tap;no_rs";
@@ -39,10 +39,10 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess }) => {
       example = "2025-11-26 14:59:46;6282114115293;82118776787;Debit;210000;IDR;Top Up balance via SF;Ahmad Gunawan;Pemuda;2100005480;MAJU JAYA";
       filename = "template_db_bucket_transaksi.csv";
     } else {
-      // ADISTI TEMPLATE (Sesuai Tabel Database adisti_transactions)
-      // Database: created_at, sn_number, warehouse, product_name, salesforce_name, tap, no_rs, id_digipos, nama_outlet
-      headers = "created_at;sn_number;warehouse;product_name;salesforce_name;tap;no_rs;id_digipos;nama_outlet";
-      example = "2025-11-26;123456789012;Gudang Utama;Voucher 10GB;CVS KNG 05;Pemuda;RS-99901;DG-10001;Outlet A";
+      // ADISTI TEMPLATE REVISI (Menyesuaikan File Asli User: TAP di belakang)
+      // Database: created_at, sn_number, warehouse, product_name, salesforce_name, no_rs, id_digipos, nama_outlet, tap
+      headers = "created_at;sn_number;warehouse;product_name;salesforce_name;no_rs;id_digipos;nama_outlet;tap";
+      example = "2025-11-26;123456789012;Gudang Utama;Voucher 10GB;CVS KNG 05;RS-99901;DG-10001;Outlet A;Pemuda";
       filename = "template_db_list_sn_adisti.csv";
     }
 
@@ -139,7 +139,7 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess }) => {
         // Loop untuk mencoba setiap pemisah sampai ketemu data yang valid
         for (const delimiter of delimitersToTry) {
             // Ambil header
-            const currentHeader = parseCSVLine(lines[0], delimiter).map(h => h.toLowerCase().trim().replace(/_/g, '')); // Normalize for matching
+            const currentHeader = parseCSVLine(lines[0], delimiter).map(h => h.toLowerCase().trim().replace(/_/g, '')); 
             const rawHeader = parseCSVLine(lines[0], delimiter).map(h => h.trim());
             
             // Cek apakah header masuk akal (minimal 2 kolom)
@@ -148,10 +148,7 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess }) => {
             addLog(`Mencoba pemisah '${delimiter}' -> Header: [${rawHeader.join(', ')}]`);
 
             // --- CONFIGURASI MAPPING ---
-            // Kita cari index kolom berdasarkan nama header di CSV
-            // UPDATE: Prioritaskan nama kolom database (snnumber, warehouse, dll)
             const findIdx = (keywords: string[]) => {
-                // Normalize keywords too
                 const normKeywords = keywords.map(k => k.toLowerCase().replace(/_/g, ''));
                 return currentHeader.findIndex(h => normKeywords.includes(h));
             };
@@ -164,27 +161,27 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess }) => {
             let trxTypeIdx = -1, senderIdx = -1, receiverIdx = -1, remarksIdx = -1, currencyIdx = -1, trxIdIdx = -1;
 
             // --- LOGIKA MAPPING ---
-            
             if (uploadMode === 'adisti') {
-                // Database: created_at, sn_number, warehouse, product_name, salesforce_name, tap, no_rs, id_digipos, nama_outlet
+                // Cari berdasarkan nama kolom
                 snIdx = findIdx(['snnumber', 'sn', 'notrsn']);
-                dateIdx = findIdx(['createdat', 'tanggal', 'date']);
+                dateIdx = findIdx(['createdat', 'tanggal', 'date', 'transactiondate']);
                 whIdx = findIdx(['warehouse', 'gudang']);
                 prodIdx = findIdx(['productname', 'product', 'produk']);
                 sfIdx = findIdx(['salesforcename', 'salesforce', 'sf']);
                 rsIdx = findIdx(['nors', 'rs']);
-                digiIdx = findIdx(['iddigipos', 'digipos']);
+                digiIdx = findIdx(['iddigipos', 'digipos', 'id_digipos']);
                 outletIdx = findIdx(['namaoutlet', 'outlet', 'nama_outlet']);
                 tapIdx = findIdx(['tap']);
 
-                // Fallback Force Index jika pakai template lama
-                if (snIdx === -1 && rawHeader.includes('NO_TR_SN')) {
-                   addLog("Menggunakan fallback index Adisti Lama.");
-                   dateIdx=0; snIdx=1; whIdx=2; prodIdx=3; sfIdx=4; rsIdx=5; digiIdx=6; outletIdx=7; tapIdx=8;
+                // === BLIND FALLBACK MODE ADISTI ===
+                // Jika tidak ketemu kolom SN berdasarkan nama, kita PAKSA pakai index urutan standar
+                if (snIdx === -1) {
+                    addLog("Warning: Kolom SN tidak ditemukan by Name. Menggunakan Fallback Urutan Adisti (TAP Akhir).");
+                    // Asumsi urutan: Date (0), SN (1), Warehouse (2), Product (3), SF (4), RS (5), Digi (6), Outlet (7), Tap (8)
+                    dateIdx=0; snIdx=1; whIdx=2; prodIdx=3; sfIdx=4; rsIdx=5; digiIdx=6; outletIdx=7; tapIdx=8;
                 }
             } 
             else if (uploadMode === 'new') {
-                // Database: sn_number, flag, product_name, sub_category, warehouse, salesforce_name, tap, no_rs
                 snIdx = findIdx(['snnumber', 'nosn', 'sn']);
                 flagIdx = findIdx(['flag']);
                 prodIdx = findIdx(['productname', 'namaproduk', 'product']);
@@ -194,21 +191,21 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess }) => {
                 tapIdx = findIdx(['tap']);
                 rsIdx = findIdx(['nors']);
 
-                if (snIdx === -1) { snIdx=0; flagIdx=1; prodIdx=2; } // Default fallback
+                if (snIdx === -1) { 
+                    addLog("Fallback Urutan Report SN");
+                    snIdx=0; flagIdx=1; prodIdx=2; catIdx=3; whIdx=4; sfIdx=5; tapIdx=6; rsIdx=7; 
+                }
             }
             else if (uploadMode === 'update') {
-                // Database: sn_number, id_digipos, nama_outlet, price, transaction_id
                 snIdx = findIdx(['snnumber', 'nosn', 'sn']);
                 digiIdx = findIdx(['iddigipos', 'digipos']);
                 outletIdx = findIdx(['namaoutlet', 'outlet']);
                 amountIdx = findIdx(['price', 'harga', 'amount']);
                 trxIdIdx = findIdx(['transactionid', 'trxid']);
                 
-                // Default fallback
                 if (snIdx === -1) { snIdx=0; digiIdx=1; outletIdx=2; amountIdx=3; trxIdIdx=4; }
             }
             else { // Topup & Bucket
-                // Database: transaction_date, sender, receiver, transaction_type, amount, ...
                 dateIdx = findIdx(['transactiondate', 'tanggal', 'date']);
                 senderIdx = findIdx(['sender', 'pengirim']);
                 receiverIdx = findIdx(['receiver', 'penerima']);
@@ -221,7 +218,7 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess }) => {
                 digiIdx = findIdx(['iddigipos', 'digipos']);
                 outletIdx = findIdx(['namaoutlet', 'outlet']);
                 
-                if (amountIdx === -1) amountIdx = 4; // Fallback
+                if (amountIdx === -1) { amountIdx = 4; dateIdx=0; } // Fallback
             }
 
             const tempItems: any[] = [];
@@ -229,67 +226,74 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess }) => {
             // Loop data mulai baris ke-2 (index 1)
             for (let i = 1; i < lines.length; i++) {
                 const parts = parseCSVLine(lines[i], delimiter);
-                if (parts.length < 2) continue; // Skip baris rusak
+                
+                // Toleransi tinggi: Selama ada minimal 2 kolom, coba baca
+                if (parts.length < 2) continue; 
 
                 const snRaw = snIdx !== -1 ? getVal(parts, snIdx) : '';
                 
                 // === KONSTRUKSI OBJECT DATA ===
-                
                 if (uploadMode === 'adisti') {
-                    if (!snRaw || snRaw.length < 5) continue; 
-                    tempItems.push({
-                        created_at: getVal(parts, dateIdx) || new Date().toISOString(),
-                        sn_number: snRaw,
-                        warehouse: getVal(parts, whIdx),
-                        product_name: getVal(parts, prodIdx),
-                        salesforce_name: getVal(parts, sfIdx),
-                        no_rs: getVal(parts, rsIdx),
-                        id_digipos: getVal(parts, digiIdx),
-                        nama_outlet: getVal(parts, outletIdx),
-                        tap: getVal(parts, tapIdx)
-                    });
+                    // Validasi Longgar: Asal ada SN lebih dari 5 digit, sikat
+                    if (snRaw && snRaw.length > 5) {
+                        tempItems.push({
+                            created_at: getVal(parts, dateIdx) || new Date().toISOString(),
+                            sn_number: snRaw,
+                            warehouse: getVal(parts, whIdx) || '-',
+                            product_name: getVal(parts, prodIdx) || '-',
+                            salesforce_name: getVal(parts, sfIdx) || '-',
+                            no_rs: getVal(parts, rsIdx) || '-',
+                            id_digipos: getVal(parts, digiIdx) || '-',
+                            nama_outlet: getVal(parts, outletIdx) || '-',
+                            tap: getVal(parts, tapIdx) || '-'
+                        });
+                    }
                 }
                 else if (uploadMode === 'new') {
-                     if (!snRaw || snRaw.length < 5) continue;
-                     tempItems.push({
-                        sn_number: snRaw,
-                        flag: getVal(parts, flagIdx) || '-',
-                        product_name: getVal(parts, prodIdx) || 'Unknown',
-                        sub_category: getVal(parts, catIdx) || 'General',
-                        warehouse: getVal(parts, whIdx) || 'Gudang Utama',
-                        expired_date: new Date(Date.now() + 86400000 * 30).toISOString().split('T')[0],
-                        salesforce_name: getVal(parts, sfIdx) || '-',
-                        tap: getVal(parts, tapIdx) || '-',
-                        no_rs: getVal(parts, rsIdx) || '-'
-                    });
+                     if (snRaw && snRaw.length > 5) {
+                         tempItems.push({
+                            sn_number: snRaw,
+                            flag: getVal(parts, flagIdx) || '-',
+                            product_name: getVal(parts, prodIdx) || 'Unknown',
+                            sub_category: getVal(parts, catIdx) || 'General',
+                            warehouse: getVal(parts, whIdx) || 'Gudang Utama',
+                            expired_date: new Date(Date.now() + 86400000 * 30).toISOString().split('T')[0],
+                            salesforce_name: getVal(parts, sfIdx) || '-',
+                            tap: getVal(parts, tapIdx) || '-',
+                            no_rs: getVal(parts, rsIdx) || '-'
+                        });
+                     }
                 }
                 else if (uploadMode === 'update') {
-                    if (!snRaw) continue;
-                    const priceStr = getVal(parts, amountIdx).replace(/[^0-9]/g, '');
-                    tempItems.push({
-                        sn_number: snRaw,
-                        id_digipos: getVal(parts, digiIdx),
-                        nama_outlet: getVal(parts, outletIdx),
-                        price: priceStr ? parseInt(priceStr) : 0,
-                        transaction_id: getVal(parts, trxIdIdx)
-                    });
+                    if (snRaw) {
+                        const priceStr = getVal(parts, amountIdx).replace(/[^0-9]/g, '');
+                        tempItems.push({
+                            sn_number: snRaw,
+                            id_digipos: getVal(parts, digiIdx),
+                            nama_outlet: getVal(parts, outletIdx),
+                            price: priceStr ? parseInt(priceStr) : 0,
+                            transaction_id: getVal(parts, trxIdIdx)
+                        });
+                    }
                 }
                 else { // Topup & Bucket
-                    if (parts.length < 5) continue;
-                    const amtStr = getVal(parts, amountIdx).replace(/[^0-9]/g, '');
-                    tempItems.push({
-                        transaction_date: getVal(parts, dateIdx) || getVal(parts, 0),
-                        sender: getVal(parts, senderIdx) || getVal(parts, 1),
-                        receiver: getVal(parts, receiverIdx) || getVal(parts, 2),
-                        transaction_type: getVal(parts, trxTypeIdx) || getVal(parts, 3),
-                        amount: amtStr ? parseInt(amtStr) : 0,
-                        currency: getVal(parts, currencyIdx) || 'IDR',
-                        remarks: getVal(parts, remarksIdx) || getVal(parts, 6),
-                        salesforce: getVal(parts, sfIdx) || getVal(parts, 7),
-                        tap: getVal(parts, tapIdx) || getVal(parts, 8),
-                        id_digipos: getVal(parts, digiIdx) || getVal(parts, 9),
-                        nama_outlet: getVal(parts, outletIdx) || getVal(parts, 10)
-                    });
+                     const amtStr = getVal(parts, amountIdx).replace(/[^0-9]/g, '');
+                     // Validasi minimal ada amount
+                     if (amtStr) {
+                        tempItems.push({
+                            transaction_date: getVal(parts, dateIdx) || getVal(parts, 0),
+                            sender: getVal(parts, senderIdx) || getVal(parts, 1),
+                            receiver: getVal(parts, receiverIdx) || getVal(parts, 2),
+                            transaction_type: getVal(parts, trxTypeIdx) || getVal(parts, 3),
+                            amount: amtStr ? parseInt(amtStr) : 0,
+                            currency: getVal(parts, currencyIdx) || 'IDR',
+                            remarks: getVal(parts, remarksIdx) || getVal(parts, 6),
+                            salesforce: getVal(parts, sfIdx) || getVal(parts, 7),
+                            tap: getVal(parts, tapIdx) || getVal(parts, 8),
+                            id_digipos: getVal(parts, digiIdx) || getVal(parts, 9),
+                            nama_outlet: getVal(parts, outletIdx) || getVal(parts, 10)
+                        });
+                     }
                 }
             }
 
@@ -304,7 +308,7 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess }) => {
 
         if (finalParsedItems.length === 0) {
             setShowDebug(true);
-            throw new Error(`GAGAL: Tidak ada data valid yang ditemukan.\nTips: Pastikan baris pertama file CSV adalah Judul Kolom (Header) yang sesuai dengan Template Baru.`);
+            throw new Error(`GAGAL: Tidak ada data valid yang ditemukan.\nMohon pastikan file menggunakan template terbaru v2.0.\nTips: Download template baru dengan tombol di pojok kanan.`);
         }
 
         // SEND TO BACKEND
@@ -352,7 +356,9 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess }) => {
   return (
     <div className="max-w-6xl mx-auto animate-fade-in">
       <div className="mb-6">
-        <h2 className="text-2xl font-bold text-slate-800">Upload Center</h2>
+        <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
+            Upload Center <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full">v2.0</span>
+        </h2>
         <p className="text-slate-500">Kelola semua data aplikasi dalam satu tempat</p>
       </div>
 

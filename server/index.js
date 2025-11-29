@@ -18,8 +18,9 @@ app.use(cors());
 app.use(express.json({ limit: '100mb' })); 
 app.use(express.urlencoded({ limit: '100mb', extended: true }));
 
-// Serve Static Files (Frontend Production Build)
-app.use(express.static(path.join(__dirname, 'public')));
+// CRITICAL FIX: Serve Static Files from the root 'dist' folder (Vite build output)
+// Instead of local 'public' folder which might be empty or outdated
+app.use(express.static(path.join(__dirname, '../dist')));
 
 // Middleware Verifikasi Token
 const authenticateToken = (req, res, next) => {
@@ -86,7 +87,7 @@ app.post('/api/login', async (req, res) => {
             id: user.id, 
             username: user.username, 
             role: user.role, 
-            name: user.name,
+            name: user.name, 
             mustChangePassword: isDefaultPassword 
         } 
     });
@@ -386,9 +387,9 @@ app.delete('/api/users/:id', async (req, res) => {
     }
 });
 
-// Catch-all for React Router (Must be last)
+// Catch-all for React Router - Serve from ../dist
 app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  res.sendFile(path.join(__dirname, '../dist', 'index.html'));
 });
 
 app.listen(PORT, () => {
