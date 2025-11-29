@@ -301,12 +301,68 @@ app.post('/api/bucket/bulk', async (req, res) => {
   }
 });
 
-// 6. ADISTI
+// 6. ADISTI (SERVER SIDE PAGINATION)
 app.get('/api/adisti', async (req, res) => {
   try {
-    const [rows] = await db.query('SELECT * FROM adisti_transactions ORDER BY inserted_at DESC LIMIT 5000');
-    res.json(rows);
+    // 1. Ambil Parameter Query
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 100;
+    const offset = (page - 1) * limit;
+    
+    const search = req.query.search || '';
+    const startDate = req.query.startDate || '';
+    const endDate = req.query.endDate || '';
+    const salesforce = req.query.salesforce || '';
+    const tap = req.query.tap || '';
+
+    // 2. Bangun Query WHERE dinamis
+    let whereClause = 'WHERE 1=1';
+    const params = [];
+
+    if (search) {
+        whereClause += ` AND (sn_number LIKE ? OR product_name LIKE ? OR nama_outlet LIKE ?)`;
+        params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+    }
+
+    if (salesforce && salesforce !== 'all') {
+        whereClause += ` AND salesforce_name = ?`;
+        params.push(salesforce);
+    }
+
+    if (tap && tap !== 'all') {
+        whereClause += ` AND tap = ?`;
+        params.push(tap);
+    }
+
+    if (startDate) {
+        whereClause += ` AND (created_at >= ? OR STR_TO_DATE(created_at, '%d/%m/%Y') >= ?)`;
+        params.push(startDate, startDate);
+    }
+
+    if (endDate) {
+        whereClause += ` AND (created_at <= ? OR STR_TO_DATE(created_at, '%d/%m/%Y') <= ?)`;
+        params.push(endDate, endDate);
+    }
+
+    // 3. Hitung Total Data (Untuk Pagination)
+    const [countResult] = await db.query(`SELECT COUNT(*) as total FROM adisti_transactions ${whereClause}`, params);
+    const total = countResult[0].total;
+
+    // 4. Ambil Data Halaman Ini
+    // Tambahkan Limit dan Offset ke params
+    const queryParams = [...params, limit, offset];
+    const [rows] = await db.query(`SELECT * FROM adisti_transactions ${whereClause} ORDER BY id DESC LIMIT ? OFFSET ?`, queryParams);
+
+    // 5. Kirim Response Lengkap
+    res.json({
+        data: rows,
+        total: total,
+        page: page,
+        totalPages: Math.ceil(total / limit)
+    });
+
   } catch (err) {
+    console.error("Adisti Fetch Error:", err);
     res.status(500).json({ error: err.message });
   }
 });

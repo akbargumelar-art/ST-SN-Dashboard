@@ -1,4 +1,5 @@
 
+
 import { SerialNumber, SNStatus, User, TopupTransaction, AdistiTransaction } from '../types';
 
 const API_URL = '/api';
@@ -143,9 +144,34 @@ export const bulkAddBucketTransactions = async (newItems: any[]) => {
 };
 
 // --- ADISTI ---
-export const getAdistiTransactions = async (): Promise<AdistiTransaction[]> => {
-    const res = await fetch(`${API_URL}/adisti`, { headers: getHeaders() });
-    if (!res.ok) return [];
+// Modified to support query parameters
+export const getAdistiTransactions = async (params?: { 
+    page?: number; 
+    limit?: number; 
+    search?: string;
+    startDate?: string;
+    endDate?: string;
+    salesforce?: string;
+    tap?: string;
+}): Promise<any> => {
+    let url = `${API_URL}/adisti`;
+    
+    if (params) {
+        const query = new URLSearchParams();
+        if (params.page) query.append('page', params.page.toString());
+        if (params.limit) query.append('limit', params.limit.toString());
+        if (params.search) query.append('search', params.search);
+        if (params.startDate) query.append('startDate', params.startDate);
+        if (params.endDate) query.append('endDate', params.endDate);
+        if (params.salesforce) query.append('salesforce', params.salesforce);
+        if (params.tap) query.append('tap', params.tap);
+        url += `?${query.toString()}`;
+    }
+
+    const res = await fetch(url, { headers: getHeaders() });
+    if (!res.ok) return { data: [], total: 0, page: 1, totalPages: 1 };
+    
+    // Response is now an object { data, total, page, totalPages }
     return res.json();
 };
 
