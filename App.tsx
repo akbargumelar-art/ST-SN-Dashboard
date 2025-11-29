@@ -17,6 +17,9 @@ const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
   const [currentView, setCurrentView] = useState('home');
   const [data, setData] = useState<SerialNumber[]>([]);
+  
+  // GLOBAL STATE: Mengunci Navigasi saat Upload
+  const [isGlobalProcessing, setIsGlobalProcessing] = useState(false);
 
   useEffect(() => {
     const savedUser = localStorage.getItem('sn_user_session');
@@ -94,10 +97,13 @@ const App: React.FC = () => {
       case 'listsn':
         return <ListSN user={user} data={data} />; 
       case 'input':
-        return <InputForm onSuccess={() => {
-          loadData();
-          setCurrentView('dashboard');
-        }} />;
+        return <InputForm 
+          onSuccess={() => {
+            loadData();
+            setCurrentView('dashboard');
+          }} 
+          setIsGlobalProcessing={setIsGlobalProcessing} // PASS SETTER
+        />;
       case 'users':
         return <UserManagement />;
       default:
@@ -111,6 +117,7 @@ const App: React.FC = () => {
       onLogout={handleLogout}
       currentView={currentView}
       setCurrentView={setCurrentView}
+      isProcessing={isGlobalProcessing} // PASS STATUS
     >
       {renderView()}
     </Layout>

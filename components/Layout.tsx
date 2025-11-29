@@ -12,7 +12,8 @@ import {
   List,
   Home,
   MoreHorizontal,
-  ChevronRight
+  ChevronRight,
+  Lock
 } from 'lucide-react';
 
 interface LayoutProps {
@@ -21,9 +22,10 @@ interface LayoutProps {
   onLogout: () => void;
   currentView: string;
   setCurrentView: (view: string) => void;
+  isProcessing?: boolean; // New Prop
 }
 
-const Layout: React.FC<LayoutProps> = ({ children, user, onLogout, currentView, setCurrentView }) => {
+const Layout: React.FC<LayoutProps> = ({ children, user, onLogout, currentView, setCurrentView, isProcessing = false }) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   const menuItems = [
@@ -39,7 +41,7 @@ const Layout: React.FC<LayoutProps> = ({ children, user, onLogout, currentView, 
 
   const filteredMenu = menuItems.filter(item => item.roles.includes(user.role));
 
-  // Define Mobile Menu Order: Report SN -> Topup Saldo -> Dashboard -> Sellthru -> Lainnya
+  // Define Mobile Menu Order
   const mobilePrimaryIds = ['dashboard', 'topup', 'home', 'sellthru'];
   
   const mobilePrimaryItems = mobilePrimaryIds
@@ -48,16 +50,38 @@ const Layout: React.FC<LayoutProps> = ({ children, user, onLogout, currentView, 
 
   const mobileSecondaryItems = filteredMenu.filter(item => !mobilePrimaryIds.includes(item.id));
 
-  const handleMobileNavClick = (viewId: string) => {
+  // Handler for navigation click with Lock check
+  const handleNavClick = (viewId: string) => {
+    if (isProcessing) {
+      alert("⚠️ PERINGATAN: Sedang dalam proses upload data ke database.\n\nMohon tunggu hingga proses 100% selesai sebelum berpindah halaman.");
+      return;
+    }
     setCurrentView(viewId);
     setIsMobileMenuOpen(false);
+  };
+
+  const handleLogoutClick = () => {
+    if (isProcessing) {
+        alert("⚠️ PERINGATAN: Tidak bisa Logout saat proses upload berjalan.");
+        return;
+    }
+    onLogout();
   };
 
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden font-sans">
       
       {/* Sidebar - Desktop (Hidden on mobile) */}
-      <aside className="hidden lg:flex flex-col w-64 bg-gradient-to-b from-red-700 to-red-800 text-white shadow-2xl z-30">
+      <aside className="hidden lg:flex flex-col w-64 bg-gradient-to-b from-red-700 to-red-800 text-white shadow-2xl z-30 relative">
+        {/* Overlay Lock for Desktop Sidebar */}
+        {isProcessing && (
+            <div className="absolute inset-0 bg-slate-900/50 z-50 cursor-not-allowed flex flex-col items-center justify-center text-center p-4 backdrop-blur-[1px]">
+                <Lock className="text-white mb-2" size={32} />
+                <p className="text-white font-bold text-sm">Menu Terkunci</p>
+                <p className="text-red-100 text-xs mt-1">Sedang Proses Upload...</p>
+            </div>
+        )}
+
         <div className="p-6 border-b border-red-600/50">
           <h1 className="text-2xl font-bold text-white tracking-tight">
             SN Manager
@@ -69,12 +93,14 @@ const Layout: React.FC<LayoutProps> = ({ children, user, onLogout, currentView, 
           {filteredMenu.map((item) => (
             <button
               key={item.id}
-              onClick={() => setCurrentView(item.id)}
+              onClick={() => handleNavClick(item.id)}
+              disabled={isProcessing}
               className={`
                 w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition-all duration-200
                 ${currentView === item.id 
                   ? 'bg-white text-red-700 shadow-md font-bold' 
                   : 'text-red-100 hover:bg-red-600 hover:text-white'}
+                ${isProcessing ? 'opacity-50 cursor-not-allowed' : ''}
               `}
             >
               <item.icon size={20} />
@@ -94,8 +120,9 @@ const Layout: React.FC<LayoutProps> = ({ children, user, onLogout, currentView, 
             </div>
           </div>
           <button 
-            onClick={onLogout}
-            className="w-full flex items-center justify-center space-x-2 bg-red-900/50 hover:bg-white hover:text-red-700 text-white p-2 rounded-lg transition-all"
+            onClick={handleLogoutClick}
+            disabled={isProcessing}
+            className={`w-full flex items-center justify-center space-x-2 bg-red-900/50 hover:bg-white hover:text-red-700 text-white p-2 rounded-lg transition-all ${isProcessing ? 'opacity-50 cursor-not-allowed' : ''}`}
           >
             <LogOut size={18} />
             <span>Keluar</span>
@@ -107,7 +134,8 @@ const Layout: React.FC<LayoutProps> = ({ children, user, onLogout, currentView, 
       <main className="flex-1 flex flex-col h-full overflow-hidden relative bg-slate-50">
         
         {/* Mobile Header */}
-        <header className="lg:hidden bg-white border-b border-slate-200 p-4 flex items-center justify-between z-10 shadow-sm">
+        <header className="lg:hidden bg-white border-b border-slate-200 p-4 flex items-center justify-between z-10 shadow-sm relative">
+           {isProcessing && <div className="absolute inset-0 bg-white/50 z-20 cursor-not-allowed" />}
           <div className="flex items-center gap-2">
              <div className="w-8 h-8 rounded-full bg-red-600 flex items-center justify-center text-white font-bold text-xs">
                 SN
@@ -116,7 +144,7 @@ const Layout: React.FC<LayoutProps> = ({ children, user, onLogout, currentView, 
                 {filteredMenu.find(m => m.id === currentView)?.label || 'SN Manager'}
              </span>
           </div>
-          <button onClick={onLogout} className="text-slate-500 hover:text-red-600">
+          <button onClick={handleLogoutClick} className="text-slate-500 hover:text-red-600">
             <LogOut size={20} />
           </button>
         </header>
@@ -136,7 +164,7 @@ const Layout: React.FC<LayoutProps> = ({ children, user, onLogout, currentView, 
         {isMobileMenuOpen && (
           <div 
             className="lg:hidden fixed inset-0 bg-black/20 z-40 backdrop-blur-sm"
-            onClick={() => setIsMobileMenuOpen(false)}
+            onClick={() => !isProcessing && setIsMobileMenuOpen(false)}
           />
         )}
 
@@ -152,7 +180,7 @@ const Layout: React.FC<LayoutProps> = ({ children, user, onLogout, currentView, 
                 {mobileSecondaryItems.map((item) => (
                     <button
                         key={item.id}
-                        onClick={() => handleMobileNavClick(item.id)}
+                        onClick={() => handleNavClick(item.id)}
                         className={`
                             w-full flex items-center justify-between px-4 py-3 rounded-xl transition-colors
                             ${currentView === item.id ? 'bg-red-50 text-red-700 font-bold' : 'text-slate-600 hover:bg-slate-50'}
@@ -170,13 +198,23 @@ const Layout: React.FC<LayoutProps> = ({ children, user, onLogout, currentView, 
         </div>
 
         {/* Bottom Navigation - Mobile Only */}
-        <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 z-50 px-2 py-2 flex justify-between items-center shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] safe-area-pb">
+        <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 z-50 px-2 py-2 flex justify-between items-center shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] safe-area-pb relative">
            
+           {/* Overlay Lock for Mobile Nav */}
+           {isProcessing && (
+              <div className="absolute inset-0 bg-slate-900/50 z-50 cursor-not-allowed flex items-center justify-center backdrop-blur-[1px]">
+                  <div className="bg-white px-3 py-1 rounded-full flex items-center gap-2 shadow-lg">
+                    <Lock size={14} className="text-red-600" />
+                    <span className="text-[10px] font-bold text-slate-800">Terkunci</span>
+                  </div>
+              </div>
+           )}
+
            {/* Primary 4 Items */}
            {mobilePrimaryItems.map((item) => (
              <button
                 key={item.id}
-                onClick={() => handleMobileNavClick(item.id)}
+                onClick={() => handleNavClick(item.id)}
                 className={`
                   flex flex-col items-center justify-center w-full py-1 space-y-1 active:scale-95 transition-transform
                   ${currentView === item.id ? 'text-red-600' : 'text-slate-400 hover:text-slate-600'}

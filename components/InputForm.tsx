@@ -1,12 +1,13 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { bulkAddSerialNumbers, bulkUpdateStatus, bulkAddTopupTransactions, bulkAddBucketTransactions, bulkAddAdistiTransactions } from '../services/storage';
-import { UploadCloud, AlertCircle, FileSpreadsheet, Plus, Wallet, List, Receipt, ChevronDown, ChevronUp, CheckCircle2, Loader2, Download } from 'lucide-react';
+import { UploadCloud, AlertCircle, FileSpreadsheet, Plus, Wallet, List, Receipt, ChevronDown, ChevronUp, CheckCircle2, Loader2, Download, Lock } from 'lucide-react';
 
 interface InputFormProps {
   onSuccess: () => void;
+  setIsGlobalProcessing: (isProcessing: boolean) => void; // New Prop
 }
 
-const InputForm: React.FC<InputFormProps> = ({ onSuccess }) => {
+const InputForm: React.FC<InputFormProps> = ({ onSuccess, setIsGlobalProcessing }) => {
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
   const [file, setFile] = useState<File | null>(null);
@@ -19,22 +20,31 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess }) => {
   const [debugLog, setDebugLog] = useState<string[]>([]);
   const [showDebug, setShowDebug] = useState(false);
   
+  // PREVENT REFRESH / TAB CLOSE WHEN PROCESSING
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+        if (isProcessing) {
+            e.preventDefault();
+            e.returnValue = ''; // Chrome requires this to show dialog
+        }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [isProcessing]);
+
   const handleDownloadTemplate = () => {
     let headers, example, filename;
 
-    // UPDATE: Header disesuaikan dengan struktur Data User yang Valid
     if (uploadMode === 'new') {
-      // Database: sn_number, flag, warehouse, sub_category, product_name, salesforce_name, tap, no_rs
       headers = "sn_number;flag;product_name;sub_category;warehouse;salesforce_name;tap;no_rs";
       example = "123456789012;HVC;Kartu Sakti 10GB;Voucher Fisik;Gudang Jakarta;CVS KNG 05;TAP Pasar Baru;RS-99901";
       filename = "template_db_report_sn.csv";
     } else if (uploadMode === 'update') {
-      // Database Update: sn_number, id_digipos, nama_outlet, price, transaction_id
       headers = "sn_number;id_digipos;nama_outlet;price;transaction_id";
       example = "123456789012;DG-10001;Outlet Berkah Jaya;25000;TRX-ABC1234\n987654321098;DG-10002;Cellular Maju;50000;TRX-XYZ9876";
       filename = "template_db_sellthru.csv";
     } else if (uploadMode === 'topup') {
-      // Database: transaction_date, sender, receiver, transaction_type, amount, currency, remarks, salesforce, tap, id_digipos, nama_outlet
       headers = "transaction_date;sender;receiver;transaction_type;amount;currency;remarks;salesforce;tap;id_digipos;nama_outlet";
       example = "2025-11-26 14:59:46;6282114115293;82118776787;Debit;210000;IDR;Top Up balance via SF;Ahmad Gunawan;Pemuda;2100005480;MAJU JAYA";
       filename = "template_db_topup_saldo.csv";
@@ -43,8 +53,6 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess }) => {
       example = "2025-11-26 14:59:46;6282114115293;82118776787;Debit;210000;IDR;Top Up balance via SF;Ahmad Gunawan;Pemuda;2100005480;MAJU JAYA";
       filename = "template_db_bucket_transaksi.csv";
     } else {
-      // ADISTI TEMPLATE REVISI (Menyesuaikan File Asli User: TAP di belakang)
-      // Database: created_at, sn_number, warehouse, product_name, salesforce_name, no_rs, id_digipos, nama_outlet, tap
       headers = "created_at;sn_number;warehouse;product_name;salesforce_name;no_rs;id_digipos;nama_outlet;tap";
       example = "2025-11-26;123456789012;Gudang Utama;Voucher 10GB;CVS KNG 05;RS-99901;DG-10001;Outlet A;Pemuda";
       filename = "template_db_list_sn_adisti.csv";
@@ -73,13 +81,11 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess }) => {
     }
   };
 
-  // Helper: Membersihkan string dari tanda kutip
   const cleanStr = (str: string) => {
       if (!str) return '';
       return str.replace(/^"|"$/g, '').replace(/^'|'$/g, '').trim();
   };
 
-  // Improved CSV Splitter that respects quotes
   const parseCSVLine = (text: string, separator: string): string[] => {
     const res = [];
     let cur = '';
@@ -111,7 +117,7 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess }) => {
 
   // --- CHUNKED UPLOAD LOGIC ---
   const uploadInChunks = async (data: any[], apiFunction: (chunk: any[]) => Promise<any>) => {
-      const CHUNK_SIZE = 2000; // Kirim 2000 baris per request (Safe size)
+      const CHUNK_SIZE = 2000;
       const total = data.length;
       setTotalCount(total);
       
@@ -123,7 +129,6 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess }) => {
           setProcessedCount(currentProcessed);
           setUploadProgress(Math.round((currentProcessed / total) * 100));
           
-          // Sedikit delay agar UI sempat render update progress
           await new Promise(resolve => setTimeout(resolve, 50));
       }
   };
@@ -134,11 +139,13 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess }) => {
     setSuccessMsg('');
     setDebugLog([]);
     setIsProcessing(true);
+    setIsGlobalProcessing(true); // LOCK UI
     setUploadProgress(0);
 
     if (!file) {
       setError('Silakan pilih file CSV terlebih dahulu.');
       setIsProcessing(false);
+      setIsGlobalProcessing(false); // UNLOCK
       return;
     }
 
@@ -149,7 +156,6 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess }) => {
         let text = event.target?.result as string;
         if (!text) throw new Error("File kosong.");
         
-        // Remove BOM if present
         if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
 
         const lines = text.split(/\r\n|\n|\r/).filter(line => line.trim().length > 0);
@@ -157,39 +163,31 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess }) => {
 
         addLog(`Total Baris File: ${lines.length}`);
         
-        // === DETEKSI PEMISAH OTOMATIS (AUTO DETECT DELIMITER) ===
         const delimitersToTry = [';', ',', '\t', '|'];
         let finalParsedItems: any[] = [];
         let usedDelimiter = '';
         let headerRow: string[] = [];
 
-        // Loop untuk mencoba setiap pemisah sampai ketemu data yang valid
         for (const delimiter of delimitersToTry) {
-            // Ambil header
             const currentHeader = parseCSVLine(lines[0], delimiter).map(h => h.toLowerCase().trim().replace(/_/g, '')); 
             const rawHeader = parseCSVLine(lines[0], delimiter).map(h => h.trim());
             
-            // Cek apakah header masuk akal (minimal 2 kolom)
             if (currentHeader.length < 2) continue;
 
             addLog(`Mencoba pemisah '${delimiter}' -> Header: [${rawHeader.join(', ')}]`);
 
-            // --- CONFIGURASI MAPPING ---
             const findIdx = (keywords: string[]) => {
                 const normKeywords = keywords.map(k => k.toLowerCase().replace(/_/g, ''));
                 return currentHeader.findIndex(h => normKeywords.includes(h));
             };
             const getVal = (parts: string[], idx: number) => (idx !== -1 && parts[idx]) ? parts[idx] : '';
 
-            // Definisikan Variabel Index
             let snIdx = -1, dateIdx = -1, prodIdx = -1, flagIdx = -1, catIdx = -1;
             let whIdx = -1, sfIdx = -1, tapIdx = -1, rsIdx = -1;
             let digiIdx = -1, outletIdx = -1, amountIdx = -1;
             let trxTypeIdx = -1, senderIdx = -1, receiverIdx = -1, remarksIdx = -1, currencyIdx = -1, trxIdIdx = -1;
 
-            // --- LOGIKA MAPPING ---
             if (uploadMode === 'adisti') {
-                // Cari berdasarkan nama kolom
                 snIdx = findIdx(['snnumber', 'sn', 'notrsn']);
                 dateIdx = findIdx(['createdat', 'tanggal', 'date', 'transactiondate']);
                 whIdx = findIdx(['warehouse', 'gudang']);
@@ -200,11 +198,8 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess }) => {
                 outletIdx = findIdx(['namaoutlet', 'outlet', 'nama_outlet']);
                 tapIdx = findIdx(['tap']);
 
-                // === BLIND FALLBACK MODE ADISTI ===
-                // Jika tidak ketemu kolom SN berdasarkan nama, kita PAKSA pakai index urutan standar
                 if (snIdx === -1) {
                     addLog("Warning: Kolom SN tidak ditemukan by Name. Menggunakan Fallback Urutan Adisti (TAP Akhir).");
-                    // Asumsi urutan: Date (0), SN (1), Warehouse (2), Product (3), SF (4), RS (5), Digi (6), Outlet (7), Tap (8)
                     dateIdx=0; snIdx=1; whIdx=2; prodIdx=3; sfIdx=4; rsIdx=5; digiIdx=6; outletIdx=7; tapIdx=8;
                 }
             } 
@@ -232,7 +227,7 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess }) => {
                 
                 if (snIdx === -1) { snIdx=0; digiIdx=1; outletIdx=2; amountIdx=3; trxIdIdx=4; }
             }
-            else { // Topup & Bucket
+            else { 
                 dateIdx = findIdx(['transactiondate', 'tanggal', 'date']);
                 senderIdx = findIdx(['sender', 'pengirim']);
                 receiverIdx = findIdx(['receiver', 'penerima']);
@@ -245,23 +240,19 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess }) => {
                 digiIdx = findIdx(['iddigipos', 'digipos']);
                 outletIdx = findIdx(['namaoutlet', 'outlet']);
                 
-                if (amountIdx === -1) { amountIdx = 4; dateIdx=0; } // Fallback
+                if (amountIdx === -1) { amountIdx = 4; dateIdx=0; } 
             }
 
             const tempItems: any[] = [];
             
-            // Loop data mulai baris ke-2 (index 1)
             for (let i = 1; i < lines.length; i++) {
                 const parts = parseCSVLine(lines[i], delimiter);
                 
-                // Toleransi tinggi: Selama ada minimal 2 kolom, coba baca
                 if (parts.length < 2) continue; 
 
                 const snRaw = snIdx !== -1 ? getVal(parts, snIdx) : '';
                 
-                // === KONSTRUKSI OBJECT DATA ===
                 if (uploadMode === 'adisti') {
-                    // Validasi Longgar: Asal ada SN lebih dari 5 digit, sikat
                     if (snRaw && snRaw.length > 5) {
                         tempItems.push({
                             created_at: getVal(parts, dateIdx) || new Date().toISOString(),
@@ -303,9 +294,8 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess }) => {
                         });
                     }
                 }
-                else { // Topup & Bucket
+                else { 
                      const amtStr = getVal(parts, amountIdx).replace(/[^0-9]/g, '');
-                     // Validasi minimal ada amount
                      if (amtStr) {
                         tempItems.push({
                             transaction_date: getVal(parts, dateIdx) || getVal(parts, 0),
@@ -329,16 +319,15 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess }) => {
                 usedDelimiter = delimiter;
                 headerRow = rawHeader;
                 addLog(`SUKSES: Ditemukan ${tempItems.length} baris data valid menggunakan pemisah '${delimiter}'`);
-                break; // Stop loop delimiters
+                break; 
             }
         }
 
         if (finalParsedItems.length === 0) {
             setShowDebug(true);
-            throw new Error(`GAGAL: Tidak ada data valid yang ditemukan.\nMohon pastikan file menggunakan template terbaru v2.0.\nTips: Download template baru dengan tombol di pojok kanan.`);
+            throw new Error(`GAGAL: Tidak ada data valid yang ditemukan.\nMohon pastikan file menggunakan template terbaru v2.0.`);
         }
 
-        // SEND TO BACKEND WITH CHUNKING
         let count = finalParsedItems.length;
         addLog(`Mulai mengirim ${count} data ke server secara bertahap...`);
 
@@ -360,21 +349,21 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess }) => {
         }
 
         setFile(null);
-        // Delay refresh
         setTimeout(() => {
             onSuccess();
             setSuccessMsg('');
             setDebugLog([]);
             setShowDebug(false);
             setUploadProgress(0);
-        }, 5000); // Tampilkan pesan sukses lebih lama (5 detik)
+        }, 5000); 
 
       } catch (err: any) {
         console.error("Upload Error:", err);
         setError(err.message || 'Gagal memproses file.');
-        setShowDebug(true); // Auto show debug on error
+        setShowDebug(true);
       } finally {
         setIsProcessing(false);
+        setIsGlobalProcessing(false); // UNLOCK UI
       }
     };
 
@@ -382,7 +371,24 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess }) => {
   };
 
   return (
-    <div className="max-w-6xl mx-auto animate-fade-in">
+    <div className="max-w-6xl mx-auto animate-fade-in relative">
+      {isProcessing && (
+         <div className="absolute inset-0 bg-white/50 z-10 flex items-center justify-center backdrop-blur-[2px] rounded-xl">
+             <div className="bg-white p-6 rounded-2xl shadow-2xl text-center border-2 border-red-100 max-w-sm">
+                <Loader2 size={40} className="animate-spin text-red-600 mx-auto mb-4" />
+                <h3 className="text-xl font-bold text-slate-800">Sedang Mengupload...</h3>
+                <p className="text-sm text-slate-500 mt-2 mb-4">Mohon jangan tutup atau refresh halaman ini sampai proses selesai 100%.</p>
+                
+                <div className="w-full bg-slate-100 rounded-full h-4 overflow-hidden border border-slate-200">
+                    <div className="bg-red-600 h-full transition-all duration-300 relative" style={{ width: `${uploadProgress}%` }}>
+                       <span className="absolute inset-0 flex items-center justify-center text-[10px] text-white font-bold">{uploadProgress}%</span>
+                    </div>
+                </div>
+                <p className="text-xs font-mono text-slate-400 mt-2">{processedCount} / {totalCount} Data</p>
+             </div>
+         </div>
+      )}
+
       <div className="mb-6">
         <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
             Upload Center <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full">v2.1 Chunked</span>
@@ -391,11 +397,11 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess }) => {
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
-        <button onClick={() => setUploadMode('new')} className={`py-4 px-2 rounded-xl border-2 flex flex-col items-center justify-center space-y-2 transition-all ${uploadMode === 'new' ? 'border-red-600 bg-red-50 text-red-700' : 'border-slate-200 bg-white text-slate-500'}`}><Plus size={20} /><span className="font-bold text-xs md:text-sm">Report SN</span></button>
-        <button onClick={() => setUploadMode('adisti')} className={`py-4 px-2 rounded-xl border-2 flex flex-col items-center justify-center space-y-2 transition-all ${uploadMode === 'adisti' ? 'border-purple-600 bg-purple-50 text-purple-700' : 'border-slate-200 bg-white text-slate-500'}`}><List size={20} /><span className="font-bold text-xs md:text-sm">List SN (Adisti)</span></button>
-        <button onClick={() => setUploadMode('update')} className={`py-4 px-2 rounded-xl border-2 flex flex-col items-center justify-center space-y-2 transition-all ${uploadMode === 'update' ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-slate-200 bg-white text-slate-500'}`}><ChevronUp size={20} /><span className="font-bold text-xs md:text-sm">Sellthru</span></button>
-        <button onClick={() => setUploadMode('topup')} className={`py-4 px-2 rounded-xl border-2 flex flex-col items-center justify-center space-y-2 transition-all ${uploadMode === 'topup' ? 'border-orange-600 bg-orange-50 text-orange-700' : 'border-slate-200 bg-white text-slate-500'}`}><Wallet size={20} /><span className="font-bold text-xs md:text-sm">Topup Saldo</span></button>
-        <button onClick={() => setUploadMode('bucket')} className={`py-4 px-2 rounded-xl border-2 flex flex-col items-center justify-center space-y-2 transition-all ${uploadMode === 'bucket' ? 'border-teal-600 bg-teal-50 text-teal-700' : 'border-slate-200 bg-white text-slate-500'}`}><Receipt size={20} /><span className="font-bold text-xs md:text-sm">Bucket Trx</span></button>
+        <button disabled={isProcessing} onClick={() => setUploadMode('new')} className={`py-4 px-2 rounded-xl border-2 flex flex-col items-center justify-center space-y-2 transition-all ${uploadMode === 'new' ? 'border-red-600 bg-red-50 text-red-700' : 'border-slate-200 bg-white text-slate-500'}`}><Plus size={20} /><span className="font-bold text-xs md:text-sm">Report SN</span></button>
+        <button disabled={isProcessing} onClick={() => setUploadMode('adisti')} className={`py-4 px-2 rounded-xl border-2 flex flex-col items-center justify-center space-y-2 transition-all ${uploadMode === 'adisti' ? 'border-purple-600 bg-purple-50 text-purple-700' : 'border-slate-200 bg-white text-slate-500'}`}><List size={20} /><span className="font-bold text-xs md:text-sm">List SN (Adisti)</span></button>
+        <button disabled={isProcessing} onClick={() => setUploadMode('update')} className={`py-4 px-2 rounded-xl border-2 flex flex-col items-center justify-center space-y-2 transition-all ${uploadMode === 'update' ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-slate-200 bg-white text-slate-500'}`}><ChevronUp size={20} /><span className="font-bold text-xs md:text-sm">Sellthru</span></button>
+        <button disabled={isProcessing} onClick={() => setUploadMode('topup')} className={`py-4 px-2 rounded-xl border-2 flex flex-col items-center justify-center space-y-2 transition-all ${uploadMode === 'topup' ? 'border-orange-600 bg-orange-50 text-orange-700' : 'border-slate-200 bg-white text-slate-500'}`}><Wallet size={20} /><span className="font-bold text-xs md:text-sm">Topup Saldo</span></button>
+        <button disabled={isProcessing} onClick={() => setUploadMode('bucket')} className={`py-4 px-2 rounded-xl border-2 flex flex-col items-center justify-center space-y-2 transition-all ${uploadMode === 'bucket' ? 'border-teal-600 bg-teal-50 text-teal-700' : 'border-slate-200 bg-white text-slate-500'}`}><Receipt size={20} /><span className="font-bold text-xs md:text-sm">Bucket Trx</span></button>
       </div>
 
       <div className="bg-white p-6 md:p-8 rounded-xl shadow-sm border border-slate-200">
@@ -406,7 +412,7 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess }) => {
              </h3>
              <p className="text-xs text-slate-400 mt-1">Gunakan template database terbaru untuk hasil akurat.</p>
            </div>
-           <button onClick={handleDownloadTemplate} className="flex items-center space-x-2 text-sm text-slate-600 hover:text-slate-900 bg-slate-100 px-3 py-1.5 rounded-lg transition-colors"><Download size={16} /><span>Template DB</span></button>
+           <button disabled={isProcessing} onClick={handleDownloadTemplate} className="flex items-center space-x-2 text-sm text-slate-600 hover:text-slate-900 bg-slate-100 px-3 py-1.5 rounded-lg transition-colors"><Download size={16} /><span>Template DB</span></button>
         </div>
 
         <form onSubmit={handleUpload} className="space-y-8">
@@ -419,25 +425,11 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess }) => {
           {successMsg && <div className="bg-emerald-50 text-emerald-600 p-4 rounded-lg flex items-center gap-2 text-sm border border-emerald-100 animate-pulse"><CheckCircle2 size={16} />{successMsg}</div>}
 
           <div className="border-2 border-dashed border-slate-300 rounded-xl p-8 flex flex-col items-center justify-center text-center hover:bg-slate-50 transition-colors cursor-pointer relative group">
-            <input type="file" accept=".csv" onChange={handleFileChange} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+            <input type="file" accept=".csv" onChange={handleFileChange} disabled={isProcessing} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-not-allowed" />
             <div className="p-4 rounded-full mb-3 bg-slate-100 text-slate-600 group-hover:bg-red-50 group-hover:text-red-600 transition-colors"><FileSpreadsheet size={32} /></div>
             {file ? <div><p className="text-lg font-bold text-slate-800">{file.name}</p><p className="text-sm text-slate-500">{(file.size / 1024).toFixed(2)} KB</p></div> : <div><p className="text-lg font-bold text-slate-800">Klik untuk pilih file</p><p className="text-sm text-slate-500">atau drag & drop file .csv disini</p></div>}
           </div>
 
-          {/* Progress Bar for Large Files */}
-          {isProcessing && totalCount > 0 && (
-              <div className="space-y-2">
-                  <div className="flex justify-between text-xs font-bold text-slate-600">
-                      <span>Proses Upload ke Database...</span>
-                      <span>{processedCount} / {totalCount} ({uploadProgress}%)</span>
-                  </div>
-                  <div className="w-full bg-slate-200 rounded-full h-2.5 overflow-hidden">
-                      <div className="bg-red-600 h-2.5 rounded-full transition-all duration-300" style={{ width: `${uploadProgress}%` }}></div>
-                  </div>
-              </div>
-          )}
-
-          {/* Diagnostic Log Viewer */}
           {(showDebug || debugLog.length > 0) && (
               <div className="border border-slate-200 rounded-lg overflow-hidden">
                   <div className="bg-slate-100 px-4 py-2 flex justify-between items-center cursor-pointer" onClick={() => setShowDebug(!showDebug)}>
@@ -461,7 +453,7 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess }) => {
                     ${!file || isProcessing ? 'bg-slate-300 cursor-not-allowed' : 'bg-red-600 hover:bg-red-700'}
                 `}
             >
-                {isProcessing ? <Loader2 size={20} className="animate-spin" /> : <UploadCloud size={20} />}
+                {isProcessing ? <Lock size={20} /> : <UploadCloud size={20} />}
                 <span>{isProcessing ? `Mengupload (${uploadProgress}%)...` : "Proses Upload"}</span>
             </button>
           </div>
