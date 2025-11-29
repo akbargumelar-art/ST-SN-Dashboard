@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { bulkAddSerialNumbers, bulkUpdateStatus, bulkAddTopupTransactions, bulkAddBucketTransactions, bulkAddAdistiTransactions } from '../services/storage';
-import { UploadCloud, AlertCircle, FileText, Download, FileSpreadsheet, RefreshCw, Plus, Wallet, List, Receipt, ChevronDown, ChevronUp, CheckCircle2 } from 'lucide-react';
+import { UploadCloud, AlertCircle, FileSpreadsheet, Plus, Wallet, List, Receipt, ChevronDown, ChevronUp, CheckCircle2, Loader2, Download } from 'lucide-react';
 
 interface InputFormProps {
   onSuccess: () => void;
@@ -12,6 +12,10 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess }) => {
   const [file, setFile] = useState<File | null>(null);
   const [uploadMode, setUploadMode] = useState<'new' | 'update' | 'topup' | 'bucket' | 'adisti'>('new');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0); // 0 - 100
+  const [processedCount, setProcessedCount] = useState(0);
+  const [totalCount, setTotalCount] = useState(0);
+  
   const [debugLog, setDebugLog] = useState<string[]>([]);
   const [showDebug, setShowDebug] = useState(false);
   
@@ -63,6 +67,9 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess }) => {
       setSuccessMsg('');
       setDebugLog([]);
       setShowDebug(false);
+      setUploadProgress(0);
+      setProcessedCount(0);
+      setTotalCount(0);
     }
   };
 
@@ -102,12 +109,32 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess }) => {
       console.log(msg);
   };
 
+  // --- CHUNKED UPLOAD LOGIC ---
+  const uploadInChunks = async (data: any[], apiFunction: (chunk: any[]) => Promise<any>) => {
+      const CHUNK_SIZE = 2000; // Kirim 2000 baris per request (Safe size)
+      const total = data.length;
+      setTotalCount(total);
+      
+      for (let i = 0; i < total; i += CHUNK_SIZE) {
+          const chunk = data.slice(i, i + CHUNK_SIZE);
+          await apiFunction(chunk);
+          
+          const currentProcessed = Math.min(i + CHUNK_SIZE, total);
+          setProcessedCount(currentProcessed);
+          setUploadProgress(Math.round((currentProcessed / total) * 100));
+          
+          // Sedikit delay agar UI sempat render update progress
+          await new Promise(resolve => setTimeout(resolve, 50));
+      }
+  };
+
   const handleUpload = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setSuccessMsg('');
     setDebugLog([]);
     setIsProcessing(true);
+    setUploadProgress(0);
 
     if (!file) {
       setError('Silakan pilih file CSV terlebih dahulu.');
@@ -311,25 +338,25 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess }) => {
             throw new Error(`GAGAL: Tidak ada data valid yang ditemukan.\nMohon pastikan file menggunakan template terbaru v2.0.\nTips: Download template baru dengan tombol di pojok kanan.`);
         }
 
-        // SEND TO BACKEND
+        // SEND TO BACKEND WITH CHUNKING
         let count = finalParsedItems.length;
-        addLog(`Sedang mengirim ${count} data ke server...`);
+        addLog(`Mulai mengirim ${count} data ke server secara bertahap...`);
 
         if (uploadMode === 'new') {
-            await bulkAddSerialNumbers(finalParsedItems);
-            setSuccessMsg(`Sukses upload ${count} data ke Report SN.`);
+            await uploadInChunks(finalParsedItems, bulkAddSerialNumbers);
+            setSuccessMsg(`SUKSES TOTAL: ${count} Data Report SN berhasil tersimpan di Database.`);
         } else if (uploadMode === 'update') {
-            const result: any = await bulkUpdateStatus(finalParsedItems);
-            setSuccessMsg(`Update Sukses: ${result.success}. Gagal: ${result.failed}.`);
+            await uploadInChunks(finalParsedItems, bulkUpdateStatus);
+            setSuccessMsg(`SUKSES TOTAL: ${count} Data Sellthru berhasil diproses.`);
         } else if (uploadMode === 'topup') {
-            await bulkAddTopupTransactions(finalParsedItems);
-            setSuccessMsg(`Sukses upload ${count} data Topup.`);
+            await uploadInChunks(finalParsedItems, bulkAddTopupTransactions);
+            setSuccessMsg(`SUKSES TOTAL: ${count} Data Topup berhasil tersimpan.`);
         } else if (uploadMode === 'bucket') {
-            await bulkAddBucketTransactions(finalParsedItems);
-            setSuccessMsg(`Sukses upload ${count} data Bucket.`);
+            await uploadInChunks(finalParsedItems, bulkAddBucketTransactions);
+            setSuccessMsg(`SUKSES TOTAL: ${count} Data Bucket berhasil tersimpan.`);
         } else if (uploadMode === 'adisti') {
-            await bulkAddAdistiTransactions(finalParsedItems);
-            setSuccessMsg(`Sukses upload ${count} data List SN (Adisti).`);
+            await uploadInChunks(finalParsedItems, bulkAddAdistiTransactions);
+            setSuccessMsg(`SUKSES TOTAL: ${count} Data List SN (Adisti) berhasil tersimpan.`);
         }
 
         setFile(null);
@@ -339,7 +366,8 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess }) => {
             setSuccessMsg('');
             setDebugLog([]);
             setShowDebug(false);
-        }, 2500);
+            setUploadProgress(0);
+        }, 5000); // Tampilkan pesan sukses lebih lama (5 detik)
 
       } catch (err: any) {
         console.error("Upload Error:", err);
@@ -357,7 +385,7 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess }) => {
     <div className="max-w-6xl mx-auto animate-fade-in">
       <div className="mb-6">
         <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-            Upload Center <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full">v2.0</span>
+            Upload Center <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full">v2.1 Chunked</span>
         </h2>
         <p className="text-slate-500">Kelola semua data aplikasi dalam satu tempat</p>
       </div>
@@ -365,7 +393,7 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess }) => {
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
         <button onClick={() => setUploadMode('new')} className={`py-4 px-2 rounded-xl border-2 flex flex-col items-center justify-center space-y-2 transition-all ${uploadMode === 'new' ? 'border-red-600 bg-red-50 text-red-700' : 'border-slate-200 bg-white text-slate-500'}`}><Plus size={20} /><span className="font-bold text-xs md:text-sm">Report SN</span></button>
         <button onClick={() => setUploadMode('adisti')} className={`py-4 px-2 rounded-xl border-2 flex flex-col items-center justify-center space-y-2 transition-all ${uploadMode === 'adisti' ? 'border-purple-600 bg-purple-50 text-purple-700' : 'border-slate-200 bg-white text-slate-500'}`}><List size={20} /><span className="font-bold text-xs md:text-sm">List SN (Adisti)</span></button>
-        <button onClick={() => setUploadMode('update')} className={`py-4 px-2 rounded-xl border-2 flex flex-col items-center justify-center space-y-2 transition-all ${uploadMode === 'update' ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-slate-200 bg-white text-slate-500'}`}><RefreshCw size={20} /><span className="font-bold text-xs md:text-sm">Sellthru</span></button>
+        <button onClick={() => setUploadMode('update')} className={`py-4 px-2 rounded-xl border-2 flex flex-col items-center justify-center space-y-2 transition-all ${uploadMode === 'update' ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-slate-200 bg-white text-slate-500'}`}><ChevronUp size={20} /><span className="font-bold text-xs md:text-sm">Sellthru</span></button>
         <button onClick={() => setUploadMode('topup')} className={`py-4 px-2 rounded-xl border-2 flex flex-col items-center justify-center space-y-2 transition-all ${uploadMode === 'topup' ? 'border-orange-600 bg-orange-50 text-orange-700' : 'border-slate-200 bg-white text-slate-500'}`}><Wallet size={20} /><span className="font-bold text-xs md:text-sm">Topup Saldo</span></button>
         <button onClick={() => setUploadMode('bucket')} className={`py-4 px-2 rounded-xl border-2 flex flex-col items-center justify-center space-y-2 transition-all ${uploadMode === 'bucket' ? 'border-teal-600 bg-teal-50 text-teal-700' : 'border-slate-200 bg-white text-slate-500'}`}><Receipt size={20} /><span className="font-bold text-xs md:text-sm">Bucket Trx</span></button>
       </div>
@@ -388,13 +416,26 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess }) => {
             </div>
           )}
           
-          {successMsg && <div className="bg-emerald-50 text-emerald-600 p-4 rounded-lg flex items-center gap-2 text-sm border border-emerald-100"><CheckCircle2 size={16} />{successMsg}</div>}
+          {successMsg && <div className="bg-emerald-50 text-emerald-600 p-4 rounded-lg flex items-center gap-2 text-sm border border-emerald-100 animate-pulse"><CheckCircle2 size={16} />{successMsg}</div>}
 
           <div className="border-2 border-dashed border-slate-300 rounded-xl p-8 flex flex-col items-center justify-center text-center hover:bg-slate-50 transition-colors cursor-pointer relative group">
             <input type="file" accept=".csv" onChange={handleFileChange} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
             <div className="p-4 rounded-full mb-3 bg-slate-100 text-slate-600 group-hover:bg-red-50 group-hover:text-red-600 transition-colors"><FileSpreadsheet size={32} /></div>
             {file ? <div><p className="text-lg font-bold text-slate-800">{file.name}</p><p className="text-sm text-slate-500">{(file.size / 1024).toFixed(2)} KB</p></div> : <div><p className="text-lg font-bold text-slate-800">Klik untuk pilih file</p><p className="text-sm text-slate-500">atau drag & drop file .csv disini</p></div>}
           </div>
+
+          {/* Progress Bar for Large Files */}
+          {isProcessing && totalCount > 0 && (
+              <div className="space-y-2">
+                  <div className="flex justify-between text-xs font-bold text-slate-600">
+                      <span>Proses Upload ke Database...</span>
+                      <span>{processedCount} / {totalCount} ({uploadProgress}%)</span>
+                  </div>
+                  <div className="w-full bg-slate-200 rounded-full h-2.5 overflow-hidden">
+                      <div className="bg-red-600 h-2.5 rounded-full transition-all duration-300" style={{ width: `${uploadProgress}%` }}></div>
+                  </div>
+              </div>
+          )}
 
           {/* Diagnostic Log Viewer */}
           {(showDebug || debugLog.length > 0) && (
@@ -420,8 +461,8 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess }) => {
                     ${!file || isProcessing ? 'bg-slate-300 cursor-not-allowed' : 'bg-red-600 hover:bg-red-700'}
                 `}
             >
-                <UploadCloud size={20} className={isProcessing ? "animate-bounce" : ""} />
-                <span>{isProcessing ? "Memproses Data..." : "Proses Upload"}</span>
+                {isProcessing ? <Loader2 size={20} className="animate-spin" /> : <UploadCloud size={20} />}
+                <span>{isProcessing ? `Mengupload (${uploadProgress}%)...` : "Proses Upload"}</span>
             </button>
           </div>
         </form>
