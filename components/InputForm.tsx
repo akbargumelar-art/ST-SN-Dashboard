@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { bulkAddSerialNumbers, bulkUpdateStatus, bulkAddTopupTransactions, bulkAddBucketTransactions, bulkAddAdistiTransactions } from '../services/storage';
-import { UploadCloud, AlertCircle, FileText, Download, FileSpreadsheet, RefreshCw, Plus, Wallet, List, Receipt } from 'lucide-react';
+import { UploadCloud, AlertCircle, FileText, Download, FileSpreadsheet, RefreshCw, Plus, Wallet, List, Receipt, Info } from 'lucide-react';
 
 interface InputFormProps {
   onSuccess: () => void;
@@ -15,13 +15,15 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess }) => {
   const handleDownloadTemplate = () => {
     let headers, example, filename;
 
+    // Use semicolons for templates as they are generally safer for Excel in Indonesia/EU regions,
+    // but the new parser handles both commas and semicolons.
     if (uploadMode === 'new') {
-      headers = "NO_SN,FLAG,NAMA_PRODUK,KATEGORI,GUDANG,SALESFORCE,TAP,NO_RS";
-      example = "123456789012,HVC,Kartu Sakti 10GB,Voucher Fisik,Gudang Jakarta,CVS KNG 05,TAP Pasar Baru,RS-99901";
+      headers = "NO_SN;FLAG;NAMA_PRODUK;KATEGORI;GUDANG;SALESFORCE;TAP;NO_RS";
+      example = "123456789012;HVC;Kartu Sakti 10GB;Voucher Fisik;Gudang Jakarta;CVS KNG 05;TAP Pasar Baru;RS-99901";
       filename = "template_input_report_sn.csv";
     } else if (uploadMode === 'update') {
-      headers = "SN_NUMBER,ID_DIGIPOS,NAMA_OUTLET,HARGA,TRX_ID";
-      example = "123456789012,DG-10001,Outlet Berkah Jaya,25000,TRX-ABC1234\n987654321098,DG-10002,Cellular Maju,50000,TRX-XYZ9876";
+      headers = "SN_NUMBER;ID_DIGIPOS;NAMA_OUTLET;HARGA;TRX_ID";
+      example = "123456789012;DG-10001;Outlet Berkah Jaya;25000;TRX-ABC1234\n987654321098;DG-10002;Cellular Maju;50000;TRX-XYZ9876";
       filename = "template_upload_sellthru.csv";
     } else if (uploadMode === 'topup') {
       headers = "Transaction Date;Sender;Receiver;Transaction Type;Amount;Currency;Remarks;salesforce;tap;id digipos;nama outlet";
@@ -32,8 +34,8 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess }) => {
       example = "2025-11-26 14:59:46;6282114115293;82118776787;Debit;210.000;IDR;Top Up balance via SF 210000;Ahmad Gunawan;Pemuda;2100005480;MAJU JAYA";
       filename = "template_upload_bucket_transaksi.csv";
     } else {
-      headers = "TANGGAL,NO_TR_SN,GUDANG,PRODUCT,SALESFORCE,NO_RS,ID_DIGIPOS,NAMA_OUTLET,TAP";
-      example = "2025-11-26,123456789012,Gudang Utama,Voucher 10GB,CVS KNG 05,RS-99901,DG-10001,Outlet A,Pemuda";
+      headers = "TANGGAL;NO_TR_SN;GUDANG;PRODUCT;SALESFORCE;NO_RS;ID_DIGIPOS;NAMA_OUTLET;TAP";
+      example = "2025-11-26;123456789012;Gudang Utama;Voucher 10GB;CVS KNG 05;RS-99901;DG-10001;Outlet A;Pemuda";
       filename = "template_upload_list_sn_adisti.csv";
     }
 
@@ -72,122 +74,155 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess }) => {
         const text = event.target?.result as string;
         if (!text) throw new Error("File kosong.");
 
-        const lines = text.split('\n').filter(line => line.trim() !== '');
+        // Normalize line endings to \n (handles Windows \r\n and Mac \r)
+        const lines = text.split(/\r?\n/).filter(line => line.trim() !== '');
+        
+        if (lines.length === 0) throw new Error("File tidak memiliki baris data.");
+
+        // AUTO-DETECT DELIMITER
+        // Check the first line to see if it uses ; or ,
+        const firstLine = lines[0];
+        const semicolonCount = (firstLine.match(/;/g) || []).length;
+        const commaCount = (firstLine.match(/,/g) || []).length;
+        const delimiter = semicolonCount >= commaCount ? ';' : ','; 
+
+        // Helper to clean quotes and whitespace
+        const clean = (str: string) => str ? str.trim().replace(/^"|"$/g, '').trim() : '';
+
         const parsedItems = [];
         
+        // --- PARSING LOGIC ---
         if (uploadMode === 'new') {
-          const hasHeader = lines[0].toLowerCase().includes('sn') || lines[0].toLowerCase().includes('no_sn');
-          const startIndex = hasHeader ? 1 : 0;
-          for (let i = startIndex; i < lines.length; i++) {
-            const line = lines[i];
-            const parts = line.split(',').map(p => p.trim());
-            if (parts.length < 6) continue; 
-            const sn = parts[0];
-            if (sn.length < 5) continue;
-            parsedItems.push({
-              sn_number: sn,
-              flag: parts[1] || '-',
-              product_name: parts[2] || 'Unknown',
-              sub_category: parts[3] || 'General',
-              warehouse: parts[4] || 'Gudang Utama',
-              expired_date: new Date(Date.now() + 86400000 * 30).toISOString().split('T')[0],
-              salesforce_name: parts[5] || '-',
-              tap: parts[6] || '-',
-              no_rs: parts[7] || '-'
-            });
-          }
-          if (parsedItems.length === 0) throw new Error("Tidak ada data valid.");
-          await bulkAddSerialNumbers(parsedItems);
-          setSuccessMsg(`Berhasil mengupload ${parsedItems.length} data baru ke Report SN.`);
+            // Report SN
+            const headerLine = lines[0].toLowerCase();
+            const hasHeader = headerLine.includes('sn') || headerLine.includes('no_sn');
+            const startIndex = hasHeader ? 1 : 0;
+
+            for (let i = startIndex; i < lines.length; i++) {
+                const parts = lines[i].split(delimiter);
+                if (parts.length < 1) continue;
+                
+                const sn = clean(parts[0]);
+                // Basic validation: SN usually long, skip empty or short rows
+                if (!sn || sn.length < 4) continue; 
+
+                parsedItems.push({
+                    sn_number: sn,
+                    flag: clean(parts[1]) || '-',
+                    product_name: clean(parts[2]) || 'Unknown',
+                    sub_category: clean(parts[3]) || 'General',
+                    warehouse: clean(parts[4]) || 'Gudang Utama',
+                    expired_date: new Date(Date.now() + 86400000 * 30).toISOString().split('T')[0],
+                    salesforce_name: clean(parts[5]) || '-',
+                    tap: clean(parts[6]) || '-',
+                    no_rs: clean(parts[7]) || '-'
+                });
+            }
+
+            if (parsedItems.length === 0) throw new Error(`Tidak ada data valid yang ditemukan. Deteksi delimiter: "${delimiter}". Pastikan format CSV sesuai.`);
+            await bulkAddSerialNumbers(parsedItems);
+            setSuccessMsg(`Berhasil mengupload ${parsedItems.length} data baru ke Report SN.`);
 
         } else if (uploadMode === 'update') {
-          const hasHeader = lines[0].toLowerCase().includes('sn') || lines[0].toLowerCase().includes('no_sn');
-          const startIndex = hasHeader ? 1 : 0;
-          for (let i = startIndex; i < lines.length; i++) {
-            const line = lines[i];
-            const parts = line.split(',').map(p => p.trim());
-            if (parts.length < 3) continue;
-            const sn = parts[0];
-            if (sn.length < 5) continue;
-            parsedItems.push({
-              sn_number: sn,
-              id_digipos: parts[1],
-              nama_outlet: parts[2],
-              price: parts[3] ? parseInt(parts[3]) : 0,
-              transaction_id: parts[4] || ''
-            });
-          }
-          if (parsedItems.length === 0) throw new Error("Tidak ada data valid.");
-          const result: any = await bulkUpdateStatus(parsedItems);
-          setSuccessMsg(`Update Sukses: ${result.success} data. Gagal/Tidak Ditemukan: ${result.failed} data.`);
-        
+            // Sellthru
+            const headerLine = lines[0].toLowerCase();
+            const hasHeader = headerLine.includes('sn');
+            const startIndex = hasHeader ? 1 : 0;
+
+            for (let i = startIndex; i < lines.length; i++) {
+                const parts = lines[i].split(delimiter);
+                const sn = clean(parts[0]);
+                if (!sn || sn.length < 4) continue;
+
+                parsedItems.push({
+                    sn_number: sn,
+                    id_digipos: clean(parts[1]),
+                    nama_outlet: clean(parts[2]),
+                    // Robust number parsing: remove non-digits before parsing int
+                    price: parts[3] ? parseInt(clean(parts[3]).replace(/[^0-9]/g, '') || '0') : 0,
+                    transaction_id: clean(parts[4])
+                });
+            }
+
+            if (parsedItems.length === 0) throw new Error(`Tidak ada data valid (Sellthru). Deteksi delimiter: "${delimiter}".`);
+            const result: any = await bulkUpdateStatus(parsedItems);
+            setSuccessMsg(`Update Sukses: ${result.success} data. Gagal/Tidak Ditemukan: ${result.failed} data.`);
+
         } else if (uploadMode === 'topup' || uploadMode === 'bucket') {
-          const hasHeader = lines[0].toLowerCase().includes('transaction date') || lines[0].toLowerCase().includes('sender');
-          const startIndex = hasHeader ? 1 : 0;
-          for (let i = startIndex; i < lines.length; i++) {
-            const line = lines[i];
-            const parts = line.split(';').map(p => p.trim());
-            if (parts.length < 5) continue;
-            parsedItems.push({
-              transaction_date: parts[0] || '',
-              sender: parts[1] || '',
-              receiver: parts[2] || '',
-              transaction_type: parts[3] || '',
-              amount: parseInt((parts[4] || '0').replace(/\./g, '')),
-              currency: parts[5] || 'IDR',
-              remarks: parts[6] || '',
-              salesforce: parts[7] || '',
-              tap: parts[8] || '',
-              id_digipos: parts[9] || '',
-              nama_outlet: parts[10] || ''
-            });
-          }
-          if (parsedItems.length === 0) throw new Error("Tidak ada data valid. Pastikan format CSV menggunakan delimiter titik koma (;)");
-          
-          if (uploadMode === 'topup') {
-            await bulkAddTopupTransactions(parsedItems);
-            setSuccessMsg(`Berhasil mengupload ${parsedItems.length} data ke Topup Saldo.`);
-          } else {
-            await bulkAddBucketTransactions(parsedItems);
-            setSuccessMsg(`Berhasil mengupload ${parsedItems.length} data ke Bucket Transaksi.`);
-          }
+            // Topup / Bucket
+            const headerLine = lines[0].toLowerCase();
+            const hasHeader = headerLine.includes('transaction') || headerLine.includes('sender') || headerLine.includes('tanggal');
+            const startIndex = hasHeader ? 1 : 0;
+
+            for (let i = startIndex; i < lines.length; i++) {
+                const parts = lines[i].split(delimiter);
+                if (parts.length < 5) continue;
+
+                parsedItems.push({
+                    transaction_date: clean(parts[0]),
+                    sender: clean(parts[1]),
+                    receiver: clean(parts[2]),
+                    transaction_type: clean(parts[3]),
+                    amount: parseInt(clean(parts[4]).replace(/[^0-9]/g, '') || '0'),
+                    currency: clean(parts[5]) || 'IDR',
+                    remarks: clean(parts[6]),
+                    salesforce: clean(parts[7]),
+                    tap: clean(parts[8]),
+                    id_digipos: clean(parts[9]),
+                    nama_outlet: clean(parts[10])
+                });
+            }
+
+            if (parsedItems.length === 0) throw new Error(`Tidak ada data valid (${uploadMode}). Deteksi delimiter: "${delimiter}".`);
+            
+            if (uploadMode === 'topup') {
+                await bulkAddTopupTransactions(parsedItems);
+                setSuccessMsg(`Berhasil mengupload ${parsedItems.length} data ke Topup Saldo.`);
+            } else {
+                await bulkAddBucketTransactions(parsedItems);
+                setSuccessMsg(`Berhasil mengupload ${parsedItems.length} data ke Bucket Transaksi.`);
+            }
 
         } else if (uploadMode === 'adisti') {
-          const hasHeader = lines[0].toLowerCase().includes('tanggal') || lines[0].toLowerCase().includes('no_tr');
-          const startIndex = hasHeader ? 1 : 0;
-          for (let i = startIndex; i < lines.length; i++) {
-            const line = lines[i];
-            const parts = line.split(',').map(p => p.trim());
-            if (parts.length < 5) continue;
-            parsedItems.push({
-              created_at: parts[0] || new Date().toISOString(),
-              sn_number: parts[1] || '',
-              warehouse: parts[2] || '',
-              product_name: parts[3] || '',
-              salesforce_name: parts[4] || '',
-              no_rs: parts[5] || '',
-              id_digipos: parts[6] || '',
-              nama_outlet: parts[7] || '',
-              tap: parts[8] || ''
-            });
-          }
-          if (parsedItems.length === 0) throw new Error("Tidak ada data valid.");
-          await bulkAddAdistiTransactions(parsedItems);
-          setSuccessMsg(`Berhasil mengupload ${parsedItems.length} data ke List SN (Adisti).`);
+            // Adisti
+            const headerLine = lines[0].toLowerCase();
+            const hasHeader = headerLine.includes('tanggal') || headerLine.includes('no_tr');
+            const startIndex = hasHeader ? 1 : 0;
+
+            for (let i = startIndex; i < lines.length; i++) {
+                const parts = lines[i].split(delimiter);
+                if (parts.length < 3) continue;
+
+                parsedItems.push({
+                    created_at: clean(parts[0]) || new Date().toISOString(),
+                    sn_number: clean(parts[1]),
+                    warehouse: clean(parts[2]),
+                    product_name: clean(parts[3]),
+                    salesforce_name: clean(parts[4]),
+                    no_rs: clean(parts[5]),
+                    id_digipos: clean(parts[6]),
+                    nama_outlet: clean(parts[7]),
+                    tap: clean(parts[8])
+                });
+            }
+
+            if (parsedItems.length === 0) throw new Error(`Tidak ada data valid (Adisti). Deteksi delimiter: "${delimiter}".`);
+            await bulkAddAdistiTransactions(parsedItems);
+            setSuccessMsg(`Berhasil mengupload ${parsedItems.length} data ke List SN (Adisti).`);
         }
 
         setFile(null);
         setTimeout(() => onSuccess(), 1500);
 
       } catch (err: any) {
-        setError(err.message || 'Gagal memproses file.');
+        console.error("Parse Error:", err);
+        setError(err.message || 'Gagal memproses file. Pastikan format CSV benar.');
       }
     };
 
     reader.readAsText(file);
   };
 
-  // Render (JSX) remains mostly same, just updating `handleUpload` context
   return (
     <div className="max-w-6xl mx-auto animate-fade-in">
       <div className="mb-6">
@@ -209,6 +244,7 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess }) => {
              <h3 className="text-lg font-bold text-slate-800">
                {uploadMode === 'new' ? 'Upload Data Report SN' : uploadMode === 'update' ? 'Upload Laporan Sellthru' : uploadMode === 'adisti' ? 'Upload List SN (Adisti)' : uploadMode === 'topup' ? 'Upload Topup Saldo' : 'Upload Bucket Transaksi'}
              </h3>
+             <p className="text-xs text-slate-400 mt-1">Sistem akan otomatis mendeteksi pemisah (koma atau titik koma).</p>
            </div>
            <button onClick={handleDownloadTemplate} className="flex items-center space-x-2 text-sm text-slate-600 hover:text-slate-900 bg-slate-100 px-3 py-1.5 rounded-lg transition-colors"><Download size={16} /><span>Template CSV</span></button>
         </div>
@@ -221,6 +257,19 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess }) => {
             <input type="file" accept=".csv" onChange={handleFileChange} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
             <div className="p-4 rounded-full mb-3 bg-slate-100 text-slate-600"><FileSpreadsheet size={32} /></div>
             {file ? <div><p className="text-lg font-bold text-slate-800">{file.name}</p><p className="text-sm text-slate-500">{(file.size / 1024).toFixed(2)} KB</p></div> : <div><p className="text-lg font-bold text-slate-800">Klik untuk pilih file</p><p className="text-sm text-slate-500">atau drag & drop file .csv disini</p></div>}
+          </div>
+
+          <div className="bg-blue-50 p-4 rounded-lg border border-blue-100 text-xs text-blue-700 flex gap-2">
+            <Info size={16} className="flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="font-bold mb-1">Tips Upload:</p>
+              <ul className="list-disc ml-4 space-y-1">
+                 <li>Pastikan file berformat <strong>.csv</strong></li>
+                 <li>Urutan kolom harus sesuai dengan Template.</li>
+                 <li>Aplikasi mendukung format Excel Indonesia (titik koma ';') dan Internasional (koma ',').</li>
+                 <li>Jika gagal, coba buka file di Notepad untuk memastikan datanya tidak kosong atau rusak.</li>
+              </ul>
+            </div>
           </div>
 
           <div className="pt-4 border-t border-slate-100 flex justify-end">
