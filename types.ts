@@ -12,6 +12,8 @@ export interface User {
   role: UserRole;
   name: string;
   mustChangePassword?: boolean;
+  assigned_salesforce?: string | null;
+  assigned_tap?: string | null;
 }
 
 export enum SNStatus {

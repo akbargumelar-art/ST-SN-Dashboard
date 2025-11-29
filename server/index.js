@@ -19,7 +19,6 @@ app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ limit: '100mb', extended: true }));
 
 // CRITICAL FIX: Serve Static Files from the root 'dist' folder (Vite build output)
-// Instead of local 'public' folder which might be empty or outdated
 app.use(express.static(path.join(__dirname, '../dist')));
 
 // Middleware Verifikasi Token
@@ -50,13 +49,12 @@ const chunkArray = (array, size) => {
 app.post('/api/login', async (req, res) => {
   const { username, password } = req.body;
   
-  // DEBUG LOGGING
   console.log(`[LOGIN START] User: ${username}`);
 
   try {
+    // Select all columns including new assignments
     const [rows] = await db.query('SELECT * FROM users WHERE username = ?', [username]);
     if (rows.length === 0) {
-        console.log(`[LOGIN FAIL] User not found: ${username}`);
         return res.status(401).json({ message: 'User not found' });
     }
 
@@ -71,13 +69,12 @@ app.post('/api/login', async (req, res) => {
     }
 
     if (!validPass) {
-        console.log(`[LOGIN FAIL] Invalid password for ${username}`);
         return res.status(401).json({ message: 'Invalid password' });
     }
 
     const isDefaultPassword = (inputPassStr === '123456');
 
-    console.log(`[LOGIN SUCCESS] User: ${username}, Role: ${user.role}, IsDefaultPass: ${isDefaultPassword}`);
+    console.log(`[LOGIN SUCCESS] User: ${username}`);
 
     const token = jwt.sign({ id: user.id, role: user.role }, SECRET_KEY, { expiresIn: '24h' });
     
@@ -88,7 +85,9 @@ app.post('/api/login', async (req, res) => {
             username: user.username, 
             role: user.role, 
             name: user.name, 
-            mustChangePassword: isDefaultPassword 
+            mustChangePassword: isDefaultPassword,
+            assigned_salesforce: user.assigned_salesforce, // NEW
+            assigned_tap: user.assigned_tap // NEW
         } 
     });
   } catch (err) {
@@ -149,7 +148,6 @@ app.post('/api/serial-numbers/bulk', async (req, res) => {
     new Date()
   ]);
 
-  // BATCH INSERT (Chunk size 1000)
   const chunks = chunkArray(values, 1000);
   let processed = 0;
 
@@ -176,7 +174,6 @@ app.post('/api/serial-numbers/bulk', async (req, res) => {
   }
 });
 
-// Update Single Status
 app.put('/api/serial-numbers/:id/status', async (req, res) => {
     const { status } = req.body;
     const { id } = req.params;
@@ -193,8 +190,6 @@ app.post('/api/serial-numbers/sellthru', async (req, res) => {
   const updates = req.body;
   if (!updates || !Array.isArray(updates)) return res.status(400).json({ message: 'Invalid data format' });
 
-  // Use chunks for updates too if massive (though updates are usually one by one)
-  // For Sellthru updates, simple loop transaction is safer for logic
   let success = 0;
   let failed = 0;
 
@@ -240,7 +235,6 @@ app.post('/api/topup/bulk', async (req, res) => {
     item.id_digipos, item.nama_outlet, new Date()
   ]);
 
-  // BATCH INSERT
   const chunks = chunkArray(values, 1000);
   const connection = await db.getConnection();
   try {
@@ -280,7 +274,6 @@ app.post('/api/bucket/bulk', async (req, res) => {
     item.id_digipos, item.nama_outlet, new Date()
   ]);
 
-  // BATCH INSERT
   const chunks = chunkArray(values, 1000);
   const connection = await db.getConnection();
   try {
@@ -304,7 +297,6 @@ app.post('/api/bucket/bulk', async (req, res) => {
 // 6. ADISTI (SERVER SIDE PAGINATION)
 app.get('/api/adisti', async (req, res) => {
   try {
-    // 1. Ambil Parameter Query
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 100;
     const offset = (page - 1) * limit;
@@ -315,7 +307,6 @@ app.get('/api/adisti', async (req, res) => {
     const salesforce = req.query.salesforce || '';
     const tap = req.query.tap || '';
 
-    // 2. Bangun Query WHERE dinamis
     let whereClause = 'WHERE 1=1';
     const params = [];
 
@@ -344,16 +335,12 @@ app.get('/api/adisti', async (req, res) => {
         params.push(endDate, endDate);
     }
 
-    // 3. Hitung Total Data (Untuk Pagination)
     const [countResult] = await db.query(`SELECT COUNT(*) as total FROM adisti_transactions ${whereClause}`, params);
     const total = countResult[0].total;
 
-    // 4. Ambil Data Halaman Ini
-    // Tambahkan Limit dan Offset ke params
     const queryParams = [...params, limit, offset];
     const [rows] = await db.query(`SELECT * FROM adisti_transactions ${whereClause} ORDER BY id DESC LIMIT ? OFFSET ?`, queryParams);
 
-    // 5. Kirim Response Lengkap
     res.json({
         data: rows,
         total: total,
@@ -375,7 +362,6 @@ app.post('/api/adisti/bulk', async (req, res) => {
     item.tap, item.no_rs, item.id_digipos, item.nama_outlet, item.created_at, new Date()
   ]);
 
-  // BATCH INSERT
   const chunks = chunkArray(values, 1000);
   const connection = await db.getConnection();
   try {
@@ -396,10 +382,10 @@ app.post('/api/adisti/bulk', async (req, res) => {
   }
 });
 
-// 7. USERS
+// 7. USERS (UPDATED for Assignments)
 app.get('/api/users', async (req, res) => {
     try {
-        const [rows] = await db.query('SELECT id, username, role, name FROM users');
+        const [rows] = await db.query('SELECT id, username, role, name, assigned_salesforce, assigned_tap FROM users');
         res.json(rows);
     } catch(err) {
         res.status(500).json({ error: err.message });
@@ -407,11 +393,13 @@ app.get('/api/users', async (req, res) => {
 });
 
 app.post('/api/users', async (req, res) => {
-    const { username, password, role, name } = req.body;
+    const { username, password, role, name, assigned_salesforce, assigned_tap } = req.body;
     try {
         const hashedPassword = await bcrypt.hash(password || '123456', 10);
-        await db.query('INSERT INTO users (username, password, role, name) VALUES (?, ?, ?, ?)', 
-            [username, hashedPassword, role, name]);
+        await db.query(
+            'INSERT INTO users (username, password, role, name, assigned_salesforce, assigned_tap) VALUES (?, ?, ?, ?, ?, ?)', 
+            [username, hashedPassword, role, name, assigned_salesforce || null, assigned_tap || null]
+        );
         res.json({ message: 'User added' });
     } catch(err) {
         if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ message: 'Username exists' });
@@ -420,14 +408,18 @@ app.post('/api/users', async (req, res) => {
 });
 
 app.put('/api/users/:id', async (req, res) => {
-    const { role, name, password } = req.body;
+    const { role, name, password, assigned_salesforce, assigned_tap } = req.body;
     try {
+        let query, params;
         if (password) {
             const hashedPassword = await bcrypt.hash(password, 10);
-            await db.query('UPDATE users SET role = ?, name = ?, password = ? WHERE id = ?', [role, name, hashedPassword, req.params.id]);
+            query = 'UPDATE users SET role = ?, name = ?, password = ?, assigned_salesforce = ?, assigned_tap = ? WHERE id = ?';
+            params = [role, name, hashedPassword, assigned_salesforce || null, assigned_tap || null, req.params.id];
         } else {
-            await db.query('UPDATE users SET role = ?, name = ? WHERE id = ?', [role, name, req.params.id]);
+            query = 'UPDATE users SET role = ?, name = ?, assigned_salesforce = ?, assigned_tap = ? WHERE id = ?';
+            params = [role, name, assigned_salesforce || null, assigned_tap || null, req.params.id];
         }
+        await db.query(query, params);
         res.json({ message: 'Updated' });
     } catch(err) {
         res.status(500).json({ error: err.message });
@@ -443,7 +435,7 @@ app.delete('/api/users/:id', async (req, res) => {
     }
 });
 
-// Catch-all for React Router - Serve from ../dist
+// Catch-all for React Router
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, '../dist', 'index.html'));
 });

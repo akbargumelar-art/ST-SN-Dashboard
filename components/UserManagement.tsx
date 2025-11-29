@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { User, UserRole } from '../types';
 import { getUsers, addUser, updateUser, deleteUser } from '../services/storage';
-import { Edit, Trash2, Save, X, UserPlus, Info } from 'lucide-react';
+import { Edit, Trash2, Save, X, UserPlus, Info, MapPin, User as UserIcon } from 'lucide-react';
 
 const UserManagement: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
@@ -11,6 +11,11 @@ const UserManagement: React.FC = () => {
   const [username, setUsername] = useState('');
   const [name, setName] = useState('');
   const [role, setRole] = useState<UserRole>(UserRole.SALESFORCE);
+  
+  // New Assignment Fields
+  const [assignedSalesforce, setAssignedSalesforce] = useState('');
+  const [assignedTap, setAssignedTap] = useState('');
+
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -32,11 +37,15 @@ const UserManagement: React.FC = () => {
       setUsername(user.username);
       setName(user.name);
       setRole(user.role);
+      setAssignedSalesforce(user.assigned_salesforce || '');
+      setAssignedTap(user.assigned_tap || '');
     } else {
       setEditingUser(null);
       setUsername('');
       setName('');
       setRole(UserRole.SALESFORCE);
+      setAssignedSalesforce('');
+      setAssignedTap('');
     }
     setError('');
     setIsModalOpen(true);
@@ -51,15 +60,23 @@ const UserManagement: React.FC = () => {
     setError('');
 
     if (!username.trim() || !name.trim()) {
-      setError('Semua field harus diisi.');
+      setError('Semua field utama harus diisi.');
       return;
     }
 
+    const userData = {
+        username,
+        name,
+        role,
+        assigned_salesforce: assignedSalesforce.trim() || null,
+        assigned_tap: assignedTap.trim() || null
+    };
+
     try {
         if (editingUser) {
-            await updateUser({ ...editingUser, username, name, role });
+            await updateUser({ ...editingUser, ...userData });
         } else {
-            await addUser({ username, name, role, password: '123456' });
+            await addUser({ ...userData, password: '123456' });
         }
         await loadUsers();
         handleCloseModal();
@@ -80,7 +97,7 @@ const UserManagement: React.FC = () => {
       <div className="flex justify-between items-center mb-6 flex-shrink-0">
         <div>
           <h2 className="text-2xl font-bold text-slate-800">Manajemen User</h2>
-          <p className="text-slate-500">Kelola akses dan peran pengguna aplikasi</p>
+          <p className="text-slate-500">Kelola akses dan assignment pengguna</p>
         </div>
         <button 
           onClick={() => handleOpenModal()}
@@ -96,17 +113,17 @@ const UserManagement: React.FC = () => {
           <table className="w-full text-left border-collapse">
             <thead className="bg-slate-50 border-b border-slate-200 sticky top-0 z-20">
               <tr>
-                <th className="px-6 py-4 font-bold text-slate-700 text-sm">ID</th>
                 <th className="px-6 py-4 font-bold text-slate-700 text-sm">Username</th>
                 <th className="px-6 py-4 font-bold text-slate-700 text-sm">Nama Lengkap</th>
                 <th className="px-6 py-4 font-bold text-slate-700 text-sm">Role</th>
+                <th className="px-6 py-4 font-bold text-slate-700 text-sm">Assigned SF</th>
+                <th className="px-6 py-4 font-bold text-slate-700 text-sm">Assigned TAP</th>
                 <th className="px-6 py-4 font-bold text-slate-700 text-sm text-right">Aksi</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {users.map((user) => (
                 <tr key={user.id} className="hover:bg-slate-50 transition-colors">
-                  <td className="px-6 py-4 text-sm text-slate-500">#{user.id}</td>
                   <td className="px-6 py-4 font-medium text-slate-800">{user.username}</td>
                   <td className="px-6 py-4 text-slate-600">{user.name}</td>
                   <td className="px-6 py-4">
@@ -114,6 +131,8 @@ const UserManagement: React.FC = () => {
                       {user.role.replace('_', ' ')}
                     </span>
                   </td>
+                  <td className="px-6 py-4 text-sm text-slate-500">{user.assigned_salesforce || '-'}</td>
+                  <td className="px-6 py-4 text-sm text-slate-500">{user.assigned_tap || '-'}</td>
                   <td className="px-6 py-4 text-right">
                     <div className="flex justify-end space-x-2">
                       <button onClick={() => handleOpenModal(user)} className="p-2 rounded-md text-blue-600 hover:bg-blue-50 transition-colors"><Edit size={18} /></button>
@@ -128,33 +147,54 @@ const UserManagement: React.FC = () => {
       </div>
 
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-scale-in">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-scale-in flex flex-col max-h-[90vh]">
             <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
               <h3 className="text-lg font-bold text-slate-800">{editingUser ? 'Edit User' : 'Tambah User Baru'}</h3>
               <button onClick={handleCloseModal} className="text-slate-400 hover:text-red-600 transition-colors"><X size={24} /></button>
             </div>
-            <form onSubmit={handleSubmit} className="p-6 space-y-4">
+            
+            <form onSubmit={handleSubmit} className="p-6 space-y-4 overflow-y-auto">
               
               {!editingUser && (
                 <div className="bg-blue-50 text-blue-700 p-3 rounded-lg flex items-start gap-2 text-sm border border-blue-100">
                     <Info size={16} className="mt-0.5 flex-shrink-0" />
-                    <p>Password default user baru adalah <strong>123456</strong>. User akan diminta mengganti password saat login pertama.</p>
+                    <p>Password default adalah <strong>123456</strong>.</p>
                 </div>
               )}
 
               {error && <div className="bg-red-50 text-red-600 text-sm p-3 rounded-lg border border-red-100">{error}</div>}
-              <div><label className="block text-sm font-bold text-slate-700 mb-1">Username</label><input type="text" value={username} onChange={(e) => setUsername(e.target.value)} className="w-full px-4 py-3 rounded-lg border border-slate-300 outline-none" placeholder="Username" disabled={!!editingUser} /></div>
-              <div><label className="block text-sm font-bold text-slate-700 mb-1">Nama Lengkap</label><input type="text" value={name} onChange={(e) => setName(e.target.value)} className="w-full px-4 py-3 rounded-lg border border-slate-300 outline-none" placeholder="Nama Lengkap" /></div>
-              <div>
-                <label className="block text-sm font-bold text-slate-700 mb-1">Role</label>
-                <select value={role} onChange={(e) => setRole(e.target.value as UserRole)} className="w-full px-4 py-3 rounded-lg border border-slate-300 outline-none">
-                  <option value={UserRole.SALESFORCE}>Salesforce</option>
-                  <option value={UserRole.SUPERVISOR}>Supervisor</option>
-                  <option value={UserRole.ADMIN}>Admin</option>
-                  <option value={UserRole.SUPER_ADMIN}>Super Admin</option>
-                </select>
+              
+              <div className="grid grid-cols-2 gap-4">
+                  <div><label className="block text-sm font-bold text-slate-700 mb-1">Username</label><input type="text" value={username} onChange={(e) => setUsername(e.target.value)} className="w-full px-4 py-3 rounded-lg border border-slate-300 outline-none" placeholder="Username" disabled={!!editingUser} /></div>
+                  <div><label className="block text-sm font-bold text-slate-700 mb-1">Role</label>
+                    <select value={role} onChange={(e) => setRole(e.target.value as UserRole)} className="w-full px-4 py-3 rounded-lg border border-slate-300 outline-none">
+                    <option value={UserRole.SALESFORCE}>Salesforce</option>
+                    <option value={UserRole.SUPERVISOR}>Supervisor</option>
+                    <option value={UserRole.ADMIN}>Admin</option>
+                    <option value={UserRole.SUPER_ADMIN}>Super Admin</option>
+                    </select>
+                  </div>
               </div>
+
+              <div><label className="block text-sm font-bold text-slate-700 mb-1">Nama Lengkap</label><input type="text" value={name} onChange={(e) => setName(e.target.value)} className="w-full px-4 py-3 rounded-lg border border-slate-300 outline-none" placeholder="Nama Lengkap User" /></div>
+
+              <div className="border-t border-slate-100 pt-4 mt-2">
+                 <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Data Assignment (Opsional)</p>
+                 <div className="space-y-3">
+                    <div>
+                        <label className="text-sm font-bold text-slate-700 mb-1 flex items-center gap-2"><UserIcon size={14} className="text-purple-500"/> Assign Salesforce</label>
+                        <input type="text" value={assignedSalesforce} onChange={(e) => setAssignedSalesforce(e.target.value)} className="w-full px-4 py-3 rounded-lg border border-slate-300 outline-none bg-slate-50 focus:bg-white" placeholder="Nama Salesforce di Laporan (Persis)" />
+                        <p className="text-[10px] text-slate-400 mt-1">User ini hanya akan melihat data dari salesforce ini.</p>
+                    </div>
+                    <div>
+                        <label className="text-sm font-bold text-slate-700 mb-1 flex items-center gap-2"><MapPin size={14} className="text-orange-500"/> Assign TAP</label>
+                        <input type="text" value={assignedTap} onChange={(e) => setAssignedTap(e.target.value)} className="w-full px-4 py-3 rounded-lg border border-slate-300 outline-none bg-slate-50 focus:bg-white" placeholder="Nama TAP di Laporan (Persis)" />
+                        <p className="text-[10px] text-slate-400 mt-1">User ini hanya akan melihat data dari TAP ini.</p>
+                    </div>
+                 </div>
+              </div>
+
               <div className="pt-4 flex justify-end space-x-3">
                 <button type="button" onClick={handleCloseModal} className="px-4 py-2 rounded-lg text-slate-600 hover:bg-slate-100 font-medium">Batal</button>
                 <button type="submit" className="px-6 py-2 rounded-lg bg-red-600 text-white hover:bg-red-700 font-bold shadow-lg flex items-center space-x-2"><Save size={18} /><span>Simpan</span></button>

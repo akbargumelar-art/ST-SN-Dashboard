@@ -134,7 +134,7 @@ const Layout: React.FC<LayoutProps> = ({ children, user, onLogout, currentView, 
       <main className="flex-1 flex flex-col h-full overflow-hidden relative bg-slate-50">
         
         {/* Mobile Header */}
-        <header className="lg:hidden bg-white border-b border-slate-200 p-4 flex items-center justify-between z-10 shadow-sm relative">
+        <header className="lg:hidden bg-white border-b border-slate-200 p-4 flex items-center justify-between z-10 shadow-sm relative flex-shrink-0">
            {isProcessing && <div className="absolute inset-0 bg-white/50 z-20 cursor-not-allowed" />}
           <div className="flex items-center gap-2">
              <div className="w-8 h-8 rounded-full bg-red-600 flex items-center justify-center text-white font-bold text-xs">
@@ -149,14 +149,12 @@ const Layout: React.FC<LayoutProps> = ({ children, user, onLogout, currentView, 
           </button>
         </header>
 
-        {/* Content Body - with explicit spacer for mobile nav */}
-        <div className="flex-1 overflow-auto p-4 lg:p-8">
+        {/* Content Body */}
+        <div className="flex-1 overflow-auto p-4 lg:p-8 scroll-smooth">
           <div className="max-w-7xl mx-auto h-full flex flex-col">
-            <div className="flex-1">
+            <div className="flex-1 pb-32 lg:pb-0"> {/* Added pb-32 for mobile bottom nav space */}
               {children}
             </div>
-            {/* Explicit Spacer for Mobile Bottom Nav - Matches height of bottom nav + some buffer */}
-            <div className="h-28 w-full flex-shrink-0 lg:hidden opacity-0 pointer-events-none" aria-hidden="true" />
           </div>
         </div>
 
@@ -197,8 +195,8 @@ const Layout: React.FC<LayoutProps> = ({ children, user, onLogout, currentView, 
             </div>
         </div>
 
-        {/* Bottom Navigation - Mobile Only */}
-        <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 z-50 px-2 py-2 flex justify-between items-center shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] safe-area-pb relative">
+        {/* Bottom Navigation - Mobile Only - FIXED BOTTOM */}
+        <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 z-[60] px-2 py-2 flex justify-between items-center shadow-[0_-4px_10px_-1px_rgba(0,0,0,0.1)] safe-area-pb">
            
            {/* Overlay Lock for Mobile Nav */}
            {isProcessing && (
@@ -216,11 +214,11 @@ const Layout: React.FC<LayoutProps> = ({ children, user, onLogout, currentView, 
                 key={item.id}
                 onClick={() => handleNavClick(item.id)}
                 className={`
-                  flex flex-col items-center justify-center w-full py-1 space-y-1 active:scale-95 transition-transform
+                  flex flex-col items-center justify-center w-full py-2 space-y-1 active:scale-95 transition-transform
                   ${currentView === item.id ? 'text-red-600' : 'text-slate-400 hover:text-slate-600'}
                 `}
              >
-                <item.icon size={22} strokeWidth={currentView === item.id ? 2.5 : 2} />
+                <item.icon size={24} strokeWidth={currentView === item.id ? 2.5 : 2} />
                 <span className="text-[10px] font-medium leading-none text-center truncate w-full px-1">
                     {item.label === 'Dashboard' ? 'Home' : item.label.split(' ')[0]}
                 </span>
@@ -231,11 +229,11 @@ const Layout: React.FC<LayoutProps> = ({ children, user, onLogout, currentView, 
            <button
               onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
               className={`
-                flex flex-col items-center justify-center w-full py-1 space-y-1 active:scale-95 transition-transform
+                flex flex-col items-center justify-center w-full py-2 space-y-1 active:scale-95 transition-transform
                 ${isMobileMenuOpen ? 'text-red-600' : 'text-slate-400 hover:text-slate-600'}
               `}
            >
-              <MoreHorizontal size={22} strokeWidth={isMobileMenuOpen ? 2.5 : 2} />
+              <MoreHorizontal size={24} strokeWidth={isMobileMenuOpen ? 2.5 : 2} />
               <span className="text-[10px] font-medium leading-none text-center">Lainnya</span>
            </button>
         </nav>
