@@ -64,7 +64,6 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess }) => {
     for (let i = 0; i < text.length; i++) {
       const c = text[i];
       if (c === '"') {
-        // Handle double quotes inside quotes
         if (inQuote && text[i+1] === '"') {
              cur += '"';
              i++; 
@@ -79,7 +78,6 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess }) => {
       }
     }
     res.push(cur);
-    // Final cleanup of wrapping quotes and trimming
     return res.map(val => val.trim().replace(/^"|"$/g, '').trim());
   };
 
@@ -101,175 +99,170 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess }) => {
       try {
         let text = event.target?.result as string;
         if (!text) throw new Error("File kosong.");
+        if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
 
-        // Remove Byte Order Mark (BOM) if present (common in Excel CSVs)
-        if (text.charCodeAt(0) === 0xFEFF) {
-            text = text.slice(1);
-        }
-
-        // Split lines handling all newline types
         const lines = text.split(/\r\n|\n|\r/).filter(line => line.trim().length > 0);
-        
         if (lines.length === 0) throw new Error("File tidak memiliki baris data.");
 
-        // SMART DELIMITER DETECTION
-        // Check first 5 lines to guess delimiter
-        const sampleLines = lines.slice(0, 5).join('\n');
-        const countOccurrences = (str: string, char: string) => (str.match(new RegExp(`\\${char}`, 'g')) || []).length;
-        
-        const commas = countOccurrences(sampleLines, ',');
-        const semicolons = countOccurrences(sampleLines, ';');
-        const tabs = countOccurrences(sampleLines, '\t');
-        const pipes = countOccurrences(sampleLines, '|');
+        // === BRUTE FORCE PARSING ===
+        // Try these delimiters in order. If one returns > 0 items, use it.
+        const delimitersToTry = [';', ',', '\t', '|'];
+        let finalParsedItems: any[] = [];
+        let usedDelimiter = '';
 
-        // Pick delimiter with max occurrences
-        let delimiter = ',';
-        const max = Math.max(commas, semicolons, tabs, pipes);
-        if (max === semicolons) delimiter = ';';
-        else if (max === tabs) delimiter = '\t';
-        else if (max === pipes) delimiter = '|';
-
-        console.log(`Detected Delimiter: '${delimiter}' based on sample analysis.`);
-
-        const parsedItems: any[] = [];
-        let startIndex = 0;
-        const firstLineParts = parseCSVLine(lines[0], delimiter);
-        
-        // Helper to check headers
-        const isHeader = (parts: string[], keywords: string[]) => {
-            const lineStr = parts.join(' ').toLowerCase();
-            return keywords.some(k => lineStr.includes(k));
-        };
-
-        // Determine Start Index (Skip Header)
-        if (uploadMode === 'new' && isHeader(firstLineParts, ['sn', 'no_sn', 'serial', 'produk'])) startIndex = 1;
-        if (uploadMode === 'update' && isHeader(firstLineParts, ['sn', 'sellthru', 'digipos', 'outlet'])) startIndex = 1;
-        if ((uploadMode === 'topup' || uploadMode === 'bucket') && isHeader(firstLineParts, ['transaction', 'date', 'sender', 'amount'])) startIndex = 1;
-        if (uploadMode === 'adisti' && isHeader(firstLineParts, ['tanggal', 'no_tr', 'gudang', 'salesforce'])) startIndex = 1;
-
-        console.log(`Processing ${lines.length} lines. Starting from index ${startIndex}. Mode: ${uploadMode}`);
-
-        for (let i = startIndex; i < lines.length; i++) {
-            const rawLine = lines[i];
-            // Skip empty lines or just delimiters
-            if (rawLine.replace(new RegExp(`\\${delimiter}|\\s`, 'g'), '').length === 0) continue;
-
-            const parts = parseCSVLine(rawLine, delimiter);
+        for (const delimiter of delimitersToTry) {
+            console.log(`Trying delimiter: '${delimiter}'`);
             
-            // Pad parts if missing columns
-            const val = (idx: number) => parts[idx] || '';
+            // Helper to get value safely
+            const getVal = (parts: string[], idx: number) => parts[idx] || '';
+            
+            // Analyze Header for Dynamic Indexing
+            const headerParts = parseCSVLine(lines[0], delimiter).map(h => h.toLowerCase());
+            
+            // -- Find Column Indexes based on Header Name --
+            const findIdx = (keywords: string[]) => headerParts.findIndex(h => keywords.some(k => h.includes(k)));
 
-            try {
-                if (uploadMode === 'new') {
-                    // Report SN
-                    // Min 1 columns (SN)
-                    const sn = val(0);
-                    if (!sn || sn.length < 3) continue; // Skip invalid SNs
-
-                    parsedItems.push({
-                        sn_number: sn,
-                        flag: val(1) || '-',
-                        product_name: val(2) || 'Unknown',
-                        sub_category: val(3) || 'General',
-                        warehouse: val(4) || 'Gudang Utama',
-                        expired_date: new Date(Date.now() + 86400000 * 30).toISOString().split('T')[0],
-                        salesforce_name: val(5) || '-',
-                        tap: val(6) || '-',
-                        no_rs: val(7) || '-'
-                    });
-
-                } else if (uploadMode === 'update') {
-                    // Sellthru
-                    const sn = val(0);
-                    if (!sn || sn.length < 3) continue;
-
-                    // Parse Price safely
-                    const priceStr = val(3).replace(/[^0-9]/g, ''); // Remove non-numeric
-                    
-                    parsedItems.push({
-                        sn_number: sn,
-                        id_digipos: val(1),
-                        nama_outlet: val(2),
-                        price: priceStr ? parseInt(priceStr) : 0,
-                        transaction_id: val(4)
-                    });
-
-                } else if (uploadMode === 'topup' || uploadMode === 'bucket') {
-                    // Topup/Bucket
-                    // Need at least date and amount usually
-                    if (!val(0)) continue;
-
-                    const amountStr = val(4).replace(/[^0-9]/g, '');
-
-                    parsedItems.push({
-                        transaction_date: val(0),
-                        sender: val(1),
-                        receiver: val(2),
-                        transaction_type: val(3),
-                        amount: amountStr ? parseInt(amountStr) : 0,
-                        currency: val(5) || 'IDR',
-                        remarks: val(6),
-                        salesforce: val(7),
-                        tap: val(8),
-                        id_digipos: val(9),
-                        nama_outlet: val(10)
-                    });
-
-                } else if (uploadMode === 'adisti') {
-                    // Adisti
-                    // Flexible parsing
-                    const sn = val(1);
-                    if (!sn) continue; // SN is mandatory at index 1 usually (NO_TR_SN)
-
-                    parsedItems.push({
-                        created_at: val(0) || new Date().toISOString(),
-                        sn_number: sn,
-                        warehouse: val(2),
-                        product_name: val(3),
-                        salesforce_name: val(4),
-                        no_rs: val(5),
-                        id_digipos: val(6),
-                        nama_outlet: val(7),
-                        tap: val(8)
-                    });
-                }
-            } catch (err) {
-                console.warn(`Skipping line ${i + 1} due to parse error`, err);
+            let snIdx = findIdx(['sn', 'no_tr', 'serial', 'nomor']);
+            let dateIdx = findIdx(['tanggal', 'date', 'tgl']);
+            let prodIdx = findIdx(['produk', 'product', 'nama_produk']);
+            let flagIdx = findIdx(['flag']);
+            let whIdx = findIdx(['gudang', 'warehouse']);
+            let sfIdx = findIdx(['sales', 'sf']);
+            let tapIdx = findIdx(['tap']);
+            let rsIdx = findIdx(['rs', 'no_rs']);
+            let digiIdx = findIdx(['digi', 'id_digi']);
+            let outletIdx = findIdx(['outlet']);
+            let amountIdx = findIdx(['amount', 'nilai', 'harga', 'price']);
+            
+            // Defaults if not found (fallback to legacy positions)
+            if (uploadMode === 'adisti') {
+                if (snIdx === -1) snIdx = 1; // Default NO_TR_SN
+            } else if (uploadMode === 'new') {
+                if (snIdx === -1) snIdx = 0;
+            } else if (uploadMode === 'update') {
+                if (snIdx === -1) snIdx = 0;
             }
+
+            const currentAttemptItems: any[] = [];
+            // Determine Start Row (Skip Header if we found header keywords, else Row 0)
+            // But usually Row 0 is header. Let's assume Row 1 start unless Row 0 looks like data (numbers).
+            let startRow = 1; 
+
+            for (let i = startRow; i < lines.length; i++) {
+                const parts = parseCSVLine(lines[i], delimiter);
+                // Basic validation: line must have enough parts relative to our needed index
+                if (parts.length <= snIdx && snIdx !== -1) continue; 
+
+                try {
+                    if (uploadMode === 'new') {
+                        const sn = getVal(parts, snIdx !== -1 ? snIdx : 0);
+                        if (!sn || sn.length < 5) continue;
+                        
+                        currentAttemptItems.push({
+                            sn_number: sn,
+                            flag: getVal(parts, flagIdx !== -1 ? flagIdx : 1) || '-',
+                            product_name: getVal(parts, prodIdx !== -1 ? prodIdx : 2) || 'Unknown',
+                            sub_category: getVal(parts, 3) || 'General', // Fallback index
+                            warehouse: getVal(parts, whIdx !== -1 ? whIdx : 4) || 'Gudang Utama',
+                            expired_date: new Date(Date.now() + 86400000 * 30).toISOString().split('T')[0],
+                            salesforce_name: getVal(parts, sfIdx !== -1 ? sfIdx : 5) || '-',
+                            tap: getVal(parts, tapIdx !== -1 ? tapIdx : 6) || '-',
+                            no_rs: getVal(parts, rsIdx !== -1 ? rsIdx : 7) || '-'
+                        });
+                    } else if (uploadMode === 'update') {
+                         const sn = getVal(parts, snIdx !== -1 ? snIdx : 0);
+                         if (!sn || sn.length < 5) continue;
+
+                         const priceStr = getVal(parts, amountIdx !== -1 ? amountIdx : 3).replace(/[^0-9]/g, '');
+
+                         currentAttemptItems.push({
+                            sn_number: sn,
+                            id_digipos: getVal(parts, digiIdx !== -1 ? digiIdx : 1),
+                            nama_outlet: getVal(parts, outletIdx !== -1 ? outletIdx : 2),
+                            price: priceStr ? parseInt(priceStr) : 0,
+                            transaction_id: getVal(parts, 4)
+                         });
+                    } else if (uploadMode === 'adisti') {
+                        // ADISTI MODE
+                        const sn = getVal(parts, snIdx); 
+                        if (!sn || sn.length < 4) continue;
+
+                        currentAttemptItems.push({
+                            created_at: getVal(parts, dateIdx !== -1 ? dateIdx : 0) || new Date().toISOString(),
+                            sn_number: sn,
+                            warehouse: getVal(parts, whIdx !== -1 ? whIdx : 2),
+                            product_name: getVal(parts, prodIdx !== -1 ? prodIdx : 3),
+                            salesforce_name: getVal(parts, sfIdx !== -1 ? sfIdx : 4),
+                            no_rs: getVal(parts, rsIdx !== -1 ? rsIdx : 5),
+                            id_digipos: getVal(parts, digiIdx !== -1 ? digiIdx : 6),
+                            nama_outlet: getVal(parts, outletIdx !== -1 ? outletIdx : 7),
+                            tap: getVal(parts, tapIdx !== -1 ? tapIdx : 8)
+                        });
+                    } else if (uploadMode === 'topup' || uploadMode === 'bucket') {
+                        // Topup/Bucket usually standard format
+                        if (!getVal(parts, 0)) continue;
+                        const amtStr = getVal(parts, 4).replace(/[^0-9]/g, '');
+                        currentAttemptItems.push({
+                            transaction_date: getVal(parts, 0),
+                            sender: getVal(parts, 1),
+                            receiver: getVal(parts, 2),
+                            transaction_type: getVal(parts, 3),
+                            amount: amtStr ? parseInt(amtStr) : 0,
+                            currency: getVal(parts, 5) || 'IDR',
+                            remarks: getVal(parts, 6),
+                            salesforce: getVal(parts, 7),
+                            tap: getVal(parts, 8),
+                            id_digipos: getVal(parts, 9),
+                            nama_outlet: getVal(parts, 10)
+                        });
+                    }
+                } catch (err) {
+                    // ignore line error
+                }
+            }
+
+            // If this delimiter produced results, break and use them
+            if (currentAttemptItems.length > 0) {
+                finalParsedItems = currentAttemptItems;
+                usedDelimiter = delimiter;
+                break;
+            }
+        } // End Delimiter Loop
+
+        if (finalParsedItems.length === 0) {
+            throw new Error(`Gagal membaca data. Sistem sudah mencoba pemisah titik koma (;), koma (,), dan pipe (|) namun tidak menemukan data valid.\n\nTips: Pastikan baris pertama adalah Header dan baris kedua berisi data.`);
         }
 
-        if (parsedItems.length === 0) {
-            throw new Error(`Tidak ada data valid yang ditemukan dari ${lines.length} baris. \nDeteksi delimiter: "${delimiter}". \nPastikan file sesuai template.`);
-        }
+        console.log(`Success Parsing with delimiter '${usedDelimiter}'. Found ${finalParsedItems.length} items.`);
 
         // SEND TO API
-        let count = parsedItems.length;
+        let count = finalParsedItems.length;
         if (uploadMode === 'new') {
-            await bulkAddSerialNumbers(parsedItems);
+            await bulkAddSerialNumbers(finalParsedItems);
             setSuccessMsg(`Berhasil mengupload ${count} data ke Report SN.`);
         } else if (uploadMode === 'update') {
-            const result: any = await bulkUpdateStatus(parsedItems);
+            const result: any = await bulkUpdateStatus(finalParsedItems);
             setSuccessMsg(`Update Sukses: ${result.success}. Gagal/Tidak Ditemukan: ${result.failed}.`);
         } else if (uploadMode === 'topup') {
-            await bulkAddTopupTransactions(parsedItems);
+            await bulkAddTopupTransactions(finalParsedItems);
             setSuccessMsg(`Berhasil mengupload ${count} data ke Topup Saldo.`);
         } else if (uploadMode === 'bucket') {
-            await bulkAddBucketTransactions(parsedItems);
+            await bulkAddBucketTransactions(finalParsedItems);
             setSuccessMsg(`Berhasil mengupload ${count} data ke Bucket Transaksi.`);
         } else if (uploadMode === 'adisti') {
-            await bulkAddAdistiTransactions(parsedItems);
+            await bulkAddAdistiTransactions(finalParsedItems);
             setSuccessMsg(`Berhasil mengupload ${count} data ke List SN (Adisti).`);
         }
 
         setFile(null);
         setTimeout(() => {
             onSuccess();
-            setSuccessMsg(''); // Clear success msg after timeout
+            setSuccessMsg(''); 
         }, 2000);
 
       } catch (err: any) {
         console.error("Upload Error:", err);
-        setError(err.message || 'Gagal memproses file. Pastikan format CSV benar.');
+        setError(err.message || 'Gagal memproses file.');
       } finally {
         setIsProcessing(false);
       }
@@ -299,7 +292,7 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess }) => {
              <h3 className="text-lg font-bold text-slate-800">
                {uploadMode === 'new' ? 'Upload Data Report SN' : uploadMode === 'update' ? 'Upload Laporan Sellthru' : uploadMode === 'adisti' ? 'Upload List SN (Adisti)' : uploadMode === 'topup' ? 'Upload Topup Saldo' : 'Upload Bucket Transaksi'}
              </h3>
-             <p className="text-xs text-slate-400 mt-1">Sistem otomatis mendeteksi pemisah (koma/titik koma) & membersihkan tanda kutip.</p>
+             <p className="text-xs text-slate-400 mt-1">Sistem otomatis mendeteksi pemisah (koma/titik koma) & posisi kolom.</p>
            </div>
            <button onClick={handleDownloadTemplate} className="flex items-center space-x-2 text-sm text-slate-600 hover:text-slate-900 bg-slate-100 px-3 py-1.5 rounded-lg transition-colors"><Download size={16} /><span>Template CSV</span></button>
         </div>
@@ -319,10 +312,9 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess }) => {
             <div>
               <p className="font-bold mb-1">Tips Upload:</p>
               <ul className="list-disc ml-4 space-y-1">
-                 <li>Gunakan file <strong>.csv</strong> (Comma Delimited).</li>
-                 <li>Pastikan urutan kolom sesuai template.</li>
-                 <li>Sistem menerima format Excel Indonesia (titik koma ';') maupun US (koma ',').</li>
-                 <li>Jika file besar, proses mungkin memakan waktu beberapa detik.</li>
+                 <li>Sistem akan mencoba membaca otomatis file Excel Indonesia (;) maupun US (,).</li>
+                 <li>Pastikan file memiliki Header di baris pertama.</li>
+                 <li>Kolom "No Tr SN" atau "SN" wajib ada untuk mode Adisti.</li>
               </ul>
             </div>
           </div>
