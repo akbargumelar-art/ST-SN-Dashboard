@@ -4,7 +4,7 @@ import { getAdistiTransactions } from '../services/storage';
 import { Search, List, ArrowUpDown, Package, Users, MapPin, Database, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 
 interface ListSNProps {
-  data?: any; // Not used anymore as we fetch internally
+  data?: any; 
   user: User;
 }
 
@@ -15,7 +15,7 @@ const ListSN: React.FC<ListSNProps> = ({ user }) => {
   // Pagination State
   const [pagination, setPagination] = useState({
       page: 1,
-      limit: 100, // Load 100 items per page
+      limit: 50, // 50 items per page for faster load
       total: 0,
       totalPages: 1
   });
@@ -42,20 +42,24 @@ const ListSN: React.FC<ListSNProps> = ({ user }) => {
                 tap: tapFilter !== 'all' ? tapFilter : undefined
             });
             
-            // Check if response is the new format { data, total, ... } or old array
-            if (Array.isArray(res)) {
-                setData(res); // Fallback if server old
-            } else {
+            // Handle response format robustly
+            if (res && res.data && Array.isArray(res.data)) {
                 setData(res.data);
                 setPagination(prev => ({
                     ...prev,
-                    total: res.total,
-                    totalPages: res.totalPages,
-                    page: res.page
+                    total: res.total || 0,
+                    totalPages: res.totalPages || 1,
+                    page: res.page || 1
                 }));
+            } else if (Array.isArray(res)) {
+                // Fallback for old API format
+                setData(res);
+            } else {
+                setData([]);
             }
         } catch (error) {
             console.error("Failed to load adisti data", error);
+            setData([]);
         } finally {
             setIsLoading(false);
         }
@@ -86,12 +90,6 @@ const ListSN: React.FC<ListSNProps> = ({ user }) => {
           setPagination(prev => ({ ...prev, page: prev.page - 1 }));
       }
   };
-
-  // Hardcoded lists for filters (In real app, fetch unique values via separate API)
-  // For now, we assume users type or we use some known values. 
-  // Since we use server-side, we can't get all unique values from `data` state easily.
-  // For UX, we'll keep it simple or remove the dropdowns if we can't populate them.
-  // Let's keep them as text inputs or basic dropdowns if we know the values.
   
   return (
     <div className="flex flex-col h-full overflow-hidden animate-fade-in space-y-4">
@@ -114,7 +112,7 @@ const ListSN: React.FC<ListSNProps> = ({ user }) => {
         </div>
       </div>
 
-      {/* Summary Cards - Statis / Dinamis dari Total */}
+      {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-3 flex-shrink-0">
         <div className="bg-white p-3 rounded-xl shadow-sm border border-slate-200 flex items-center space-x-3">
             <div className="p-2 bg-purple-100 text-purple-600 rounded-lg"><Database size={18} /></div>
@@ -190,7 +188,7 @@ const ListSN: React.FC<ListSNProps> = ({ user }) => {
             </div>
          </div>
 
-         {/* Sales Filter (Manual Input for now as getting all unique sales from DB is expensive) */}
+         {/* Sales Filter */}
          <div className="lg:col-span-2">
              <span className="text-[10px] font-bold text-slate-500 uppercase mb-1 block">Salesforce</span>
              <input
