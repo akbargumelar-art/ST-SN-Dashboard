@@ -14,6 +14,7 @@ const SECRET_KEY = process.env.JWT_SECRET || 'rahasia_app_sn_manager_secure_key'
 
 // Middleware
 app.use(cors());
+// Limit upload size in Node.js app
 app.use(express.json({ limit: '100mb' })); 
 app.use(express.urlencoded({ limit: '100mb', extended: true }));
 
@@ -33,6 +34,15 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
+// Helper: Chunk Array for Batch Inserts
+const chunkArray = (array, size) => {
+    const chunked = [];
+    for (let i = 0; i < array.length; i += size) {
+        chunked.push(array.slice(i, i + size));
+    }
+    return chunked;
+};
+
 // --- ROUTES ---
 
 // 1. AUTH LOGIN
@@ -50,15 +60,12 @@ app.post('/api/login', async (req, res) => {
     }
 
     const user = rows[0];
-    
-    // Explicit conversion to ensure safe comparison
     const inputPassStr = String(password).trim();
     
     let validPass = false;
     if (user.password.startsWith('$2b$')) {
         validPass = await bcrypt.compare(inputPassStr, user.password);
     } else {
-        // Fallback for plain text legacy passwords
         validPass = inputPassStr === String(user.password);
     }
 
@@ -67,8 +74,6 @@ app.post('/api/login', async (req, res) => {
         return res.status(401).json({ message: 'Invalid password' });
     }
 
-    // CHECK FORCE CHANGE PASSWORD (STRICT)
-    // Directly check against the string '123456'
     const isDefaultPassword = (inputPassStr === '123456');
 
     console.log(`[LOGIN SUCCESS] User: ${username}, Role: ${user.role}, IsDefaultPass: ${isDefaultPassword}`);
@@ -82,7 +87,7 @@ app.post('/api/login', async (req, res) => {
             username: user.username, 
             role: user.role, 
             name: user.name,
-            mustChangePassword: isDefaultPassword // Send this flag explicitly
+            mustChangePassword: isDefaultPassword 
         } 
     });
   } catch (err) {
@@ -96,8 +101,6 @@ app.post('/api/change-password', authenticateToken, async (req, res) => {
     const { newPassword } = req.body;
     const userId = req.user.id;
 
-    console.log(`[CHANGE PASS] Request for UserID: ${userId}`);
-
     if (!newPassword || newPassword.length < 6) {
         return res.status(400).json({ message: 'Password minimal 6 karakter' });
     }
@@ -105,10 +108,8 @@ app.post('/api/change-password', authenticateToken, async (req, res) => {
     try {
         const hashedPassword = await bcrypt.hash(newPassword, 10);
         await db.query('UPDATE users SET password = ? WHERE id = ?', [hashedPassword, userId]);
-        console.log(`[CHANGE PASS] Success for UserID: ${userId}`);
         res.json({ message: 'Password berhasil diubah' });
     } catch (err) {
-        console.error('[CHANGE PASS ERROR]:', err);
         res.status(500).json({ error: err.message });
     }
 });
@@ -147,16 +148,30 @@ app.post('/api/serial-numbers/bulk', async (req, res) => {
     new Date()
   ]);
 
+  // BATCH INSERT (Chunk size 1000)
+  const chunks = chunkArray(values, 1000);
+  let processed = 0;
+
+  const connection = await db.getConnection();
   try {
-    await db.query(
-      `INSERT IGNORE INTO serial_numbers 
-      (sn_number, flag, warehouse, sub_category, product_name, expired_date, status, salesforce_name, tap, price, transaction_id, no_rs, created_at) 
-      VALUES ?`, 
-      [values]
-    );
-    res.json({ message: `Successfully processed ${values.length} records.` });
+    await connection.beginTransaction();
+    for (const chunk of chunks) {
+        await connection.query(
+          `INSERT IGNORE INTO serial_numbers 
+          (sn_number, flag, warehouse, sub_category, product_name, expired_date, status, salesforce_name, tap, price, transaction_id, no_rs, created_at) 
+          VALUES ?`, 
+          [chunk]
+        );
+        processed += chunk.length;
+    }
+    await connection.commit();
+    res.json({ message: `Successfully processed ${processed} records.` });
   } catch (err) {
+    await connection.rollback();
+    console.error('Bulk insert error:', err);
     res.status(500).json({ error: err.message });
+  } finally {
+    connection.release();
   }
 });
 
@@ -177,6 +192,8 @@ app.post('/api/serial-numbers/sellthru', async (req, res) => {
   const updates = req.body;
   if (!updates || !Array.isArray(updates)) return res.status(400).json({ message: 'Invalid data format' });
 
+  // Use chunks for updates too if massive (though updates are usually one by one)
+  // For Sellthru updates, simple loop transaction is safer for logic
   let success = 0;
   let failed = 0;
 
@@ -215,19 +232,31 @@ app.get('/api/topup', async (req, res) => {
 app.post('/api/topup/bulk', async (req, res) => {
   const data = req.body;
   if (!data) return res.status(400).json({ message: 'No data' });
+  
   const values = data.map(item => [
     item.transaction_date, item.sender, item.receiver, item.transaction_type,
     item.amount, item.currency, item.remarks, item.salesforce, item.tap,
     item.id_digipos, item.nama_outlet, new Date()
   ]);
+
+  // BATCH INSERT
+  const chunks = chunkArray(values, 1000);
+  const connection = await db.getConnection();
   try {
-    await db.query(
-      `INSERT INTO topup_transactions (transaction_date, sender, receiver, transaction_type, amount, currency, remarks, salesforce, tap, id_digipos, nama_outlet, created_at) VALUES ?`,
-      [values]
-    );
+    await connection.beginTransaction();
+    for (const chunk of chunks) {
+        await connection.query(
+          `INSERT INTO topup_transactions (transaction_date, sender, receiver, transaction_type, amount, currency, remarks, salesforce, tap, id_digipos, nama_outlet, created_at) VALUES ?`,
+          [chunk]
+        );
+    }
+    await connection.commit();
     res.json({ message: 'Imported' });
   } catch (err) {
+    await connection.rollback();
     res.status(500).json({ error: err.message });
+  } finally {
+    connection.release();
   }
 });
 
@@ -249,14 +278,25 @@ app.post('/api/bucket/bulk', async (req, res) => {
     item.amount, item.currency, item.remarks, item.salesforce, item.tap,
     item.id_digipos, item.nama_outlet, new Date()
   ]);
+
+  // BATCH INSERT
+  const chunks = chunkArray(values, 1000);
+  const connection = await db.getConnection();
   try {
-    await db.query(
-      `INSERT INTO bucket_transactions (transaction_date, sender, receiver, transaction_type, amount, currency, remarks, salesforce, tap, id_digipos, nama_outlet, created_at) VALUES ?`,
-      [values]
-    );
+    await connection.beginTransaction();
+    for (const chunk of chunks) {
+        await connection.query(
+          `INSERT INTO bucket_transactions (transaction_date, sender, receiver, transaction_type, amount, currency, remarks, salesforce, tap, id_digipos, nama_outlet, created_at) VALUES ?`,
+          [chunk]
+        );
+    }
+    await connection.commit();
     res.json({ message: 'Imported' });
   } catch (err) {
+    await connection.rollback();
     res.status(500).json({ error: err.message });
+  } finally {
+    connection.release();
   }
 });
 
@@ -277,14 +317,25 @@ app.post('/api/adisti/bulk', async (req, res) => {
     item.sn_number, item.warehouse, item.product_name, item.salesforce_name,
     item.tap, item.no_rs, item.id_digipos, item.nama_outlet, item.created_at, new Date()
   ]);
+
+  // BATCH INSERT
+  const chunks = chunkArray(values, 1000);
+  const connection = await db.getConnection();
   try {
-    await db.query(
-      `INSERT INTO adisti_transactions (sn_number, warehouse, product_name, salesforce_name, tap, no_rs, id_digipos, nama_outlet, created_at, inserted_at) VALUES ?`,
-      [values]
-    );
+    await connection.beginTransaction();
+    for (const chunk of chunks) {
+        await connection.query(
+          `INSERT INTO adisti_transactions (sn_number, warehouse, product_name, salesforce_name, tap, no_rs, id_digipos, nama_outlet, created_at, inserted_at) VALUES ?`,
+          [chunk]
+        );
+    }
+    await connection.commit();
     res.json({ message: 'Imported' });
   } catch (err) {
+    await connection.rollback();
     res.status(500).json({ error: err.message });
+  } finally {
+    connection.release();
   }
 });
 
