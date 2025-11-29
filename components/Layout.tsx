@@ -152,7 +152,7 @@ const Layout: React.FC<LayoutProps> = ({ children, user, onLogout, currentView, 
         {/* Content Body */}
         <div className="flex-1 overflow-auto p-4 lg:p-8 scroll-smooth">
           <div className="max-w-7xl mx-auto h-full flex flex-col">
-            <div className="flex-1 pb-32 lg:pb-0"> {/* Added pb-32 for mobile bottom nav space */}
+            <div className="flex-1 pb-32 lg:pb-0"> {/* FIX: Added pb-32 for mobile bottom nav space */}
               {children}
             </div>
           </div>

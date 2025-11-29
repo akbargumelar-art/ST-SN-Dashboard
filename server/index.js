@@ -86,8 +86,8 @@ app.post('/api/login', async (req, res) => {
             role: user.role, 
             name: user.name, 
             mustChangePassword: isDefaultPassword,
-            assigned_salesforce: user.assigned_salesforce, // NEW
-            assigned_tap: user.assigned_tap // NEW
+            assigned_salesforce: user.assigned_salesforce,
+            assigned_tap: user.assigned_tap
         } 
     });
   } catch (err) {
@@ -294,7 +294,20 @@ app.post('/api/bucket/bulk', async (req, res) => {
   }
 });
 
-// 6. ADISTI (SERVER SIDE PAGINATION)
+// 6. ADISTI (SERVER SIDE PAGINATION WITH MULTI-SELECT & ROBUST DATE)
+app.get('/api/adisti/filters', async (req, res) => {
+    try {
+        const [sales] = await db.query('SELECT DISTINCT salesforce_name FROM adisti_transactions WHERE salesforce_name IS NOT NULL AND salesforce_name != "" ORDER BY salesforce_name ASC');
+        const [taps] = await db.query('SELECT DISTINCT tap FROM adisti_transactions WHERE tap IS NOT NULL AND tap != "" ORDER BY tap ASC');
+        res.json({ 
+            sales: sales.map(s => s.salesforce_name),
+            taps: taps.map(t => t.tap)
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 app.get('/api/adisti', async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
@@ -304,6 +317,8 @@ app.get('/api/adisti', async (req, res) => {
     const search = req.query.search || '';
     const startDate = req.query.startDate || '';
     const endDate = req.query.endDate || '';
+    
+    // Salesforce & TAP can be comma separated string if multiple selected
     const salesforce = req.query.salesforce || '';
     const tap = req.query.tap || '';
 
@@ -315,23 +330,39 @@ app.get('/api/adisti', async (req, res) => {
         params.push(`%${search}%`, `%${search}%`, `%${search}%`);
     }
 
+    // MULTI-SELECT LOGIC for Salesforce
     if (salesforce && salesforce !== 'all') {
-        whereClause += ` AND salesforce_name = ?`;
-        params.push(salesforce);
+        const sfArray = salesforce.split(',').map(s => s.trim());
+        if (sfArray.length > 0) {
+            whereClause += ` AND salesforce_name IN (?)`;
+            params.push(sfArray);
+        }
     }
 
+    // MULTI-SELECT LOGIC for TAP
     if (tap && tap !== 'all') {
-        whereClause += ` AND tap = ?`;
-        params.push(tap);
+        const tapArray = tap.split(',').map(t => t.trim());
+        if (tapArray.length > 0) {
+            whereClause += ` AND tap IN (?)`;
+            params.push(tapArray);
+        }
     }
 
+    // ROBUST DATE LOGIC
+    // We check both direct string comparison AND str_to_date for DD/MM/YYYY format
     if (startDate) {
-        whereClause += ` AND (created_at >= ? OR STR_TO_DATE(created_at, '%d/%m/%Y') >= ?)`;
+        whereClause += ` AND (
+            (created_at REGEXP '^[0-9]{4}-[0-9]{2}-[0-9]{2}' AND created_at >= ?) OR 
+            (created_at REGEXP '^[0-9]{2}/[0-9]{2}/[0-9]{4}' AND STR_TO_DATE(created_at, '%d/%m/%Y') >= ?)
+        )`;
         params.push(startDate, startDate);
     }
 
     if (endDate) {
-        whereClause += ` AND (created_at <= ? OR STR_TO_DATE(created_at, '%d/%m/%Y') <= ?)`;
+        whereClause += ` AND (
+            (created_at REGEXP '^[0-9]{4}-[0-9]{2}-[0-9]{2}' AND created_at <= ?) OR 
+            (created_at REGEXP '^[0-9]{2}/[0-9]{2}/[0-9]{4}' AND STR_TO_DATE(created_at, '%d/%m/%Y') <= ?)
+        )`;
         params.push(endDate, endDate);
     }
 

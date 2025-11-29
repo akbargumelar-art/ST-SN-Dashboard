@@ -1,18 +1,96 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { AdistiTransaction, User } from '../types';
-import { getAdistiTransactions } from '../services/storage';
-import { Search, List, Database, Users, MapPin, Package, ChevronLeft, ChevronRight, Loader2, PlayCircle, Filter } from 'lucide-react';
+import { getAdistiTransactions, getAdistiFilters } from '../services/storage';
+import { Search, List, Database, Users, MapPin, Package, ChevronLeft, ChevronRight, Loader2, PlayCircle, Filter, ChevronDown, Check } from 'lucide-react';
 
 interface ListSNProps {
   data?: any; 
   user: User;
 }
 
+// Multi Select Component
+const MultiSelect = ({ label, options, selected, onChange, disabled, placeholder }: any) => {
+    const [isOpen, setIsOpen] = useState(false);
+    const containerRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+                setIsOpen(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
+
+    const toggleOption = (option: string) => {
+        if (selected.includes(option)) {
+            onChange(selected.filter((item: string) => item !== option));
+        } else {
+            onChange([...selected, option]);
+        }
+    };
+
+    const isAllSelected = selected.length === options.length && options.length > 0;
+    const toggleAll = () => {
+        if (isAllSelected) onChange([]);
+        else onChange([...options]);
+    };
+
+    return (
+        <div className="relative" ref={containerRef}>
+            <span className="text-[10px] font-bold text-slate-500 uppercase mb-1 block">{label}</span>
+            <div 
+                className={`w-full px-3 py-2 text-sm rounded-lg border bg-white flex justify-between items-center cursor-pointer ${disabled ? 'bg-slate-100 cursor-not-allowed border-slate-200 text-slate-400' : 'border-slate-300 hover:border-purple-400'}`}
+                onClick={() => !disabled && setIsOpen(!isOpen)}
+            >
+                <span className="truncate">
+                    {selected.length === 0 ? placeholder : `${selected.length} Terpilih`}
+                </span>
+                <ChevronDown size={14} className={`transition-transform ${isOpen ? 'rotate-180' : ''}`}/>
+            </div>
+
+            {isOpen && !disabled && (
+                <div className="absolute z-50 top-full mt-1 left-0 w-full bg-white border border-slate-200 rounded-lg shadow-xl max-h-60 overflow-y-auto">
+                    <div 
+                        className="px-3 py-2 border-b border-slate-100 flex items-center gap-2 hover:bg-slate-50 cursor-pointer font-bold text-xs text-purple-600"
+                        onClick={toggleAll}
+                    >
+                        <div className={`w-4 h-4 border rounded flex items-center justify-center ${isAllSelected ? 'bg-purple-600 border-purple-600' : 'border-slate-300'}`}>
+                             {isAllSelected && <Check size={12} className="text-white"/>}
+                        </div>
+                        Pilih Semua
+                    </div>
+                    {options.map((opt: string) => {
+                        const isSelected = selected.includes(opt);
+                        return (
+                            <div 
+                                key={opt} 
+                                className="px-3 py-2 flex items-center gap-2 hover:bg-slate-50 cursor-pointer text-sm text-slate-700"
+                                onClick={() => toggleOption(opt)}
+                            >
+                                <div className={`w-4 h-4 border rounded flex items-center justify-center ${isSelected ? 'bg-purple-600 border-purple-600' : 'border-slate-300'}`}>
+                                    {isSelected && <Check size={12} className="text-white"/>}
+                                </div>
+                                <span className="truncate">{opt}</span>
+                            </div>
+                        )
+                    })}
+                </div>
+            )}
+        </div>
+    );
+};
+
+
 const ListSN: React.FC<ListSNProps> = ({ user }) => {
   const [data, setData] = useState<AdistiTransaction[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [hasLoaded, setHasLoaded] = useState(false);
   
+  // Options for Dropdowns
+  const [filterOptions, setFilterOptions] = useState<{sales: string[], taps: string[]}>({ sales: [], taps: [] });
+
   // Pagination State
   const [pagination, setPagination] = useState({
       page: 1,
@@ -25,17 +103,28 @@ const ListSN: React.FC<ListSNProps> = ({ user }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
-  const [salesFilter, setSalesFilter] = useState('all');
-  const [tapFilter, setTapFilter] = useState('all');
+  
+  // Array based filters for Multi-Select
+  const [selectedSales, setSelectedSales] = useState<string[]>([]);
+  const [selectedTaps, setSelectedTaps] = useState<string[]>([]);
 
-  // USER ASSIGNMENT LOGIC (Lock filters if assigned)
+  // INIT: Load Filter Options (Sales & TAP names)
   useEffect(() => {
-      if (user.assigned_salesforce) {
-          setSalesFilter(user.assigned_salesforce);
-      }
-      if (user.assigned_tap) {
-          setTapFilter(user.assigned_tap);
-      }
+      const loadOptions = async () => {
+          try {
+              const res = await getAdistiFilters();
+              setFilterOptions(res);
+              
+              // If user is assigned, pre-select and lock
+              if (user.assigned_salesforce) {
+                  setSelectedSales([user.assigned_salesforce]);
+              }
+              if (user.assigned_tap) {
+                  setSelectedTaps([user.assigned_tap]);
+              }
+          } catch (e) { console.error(e); }
+      };
+      loadOptions();
   }, [user]);
 
   // Main Data Fetcher
@@ -48,8 +137,8 @@ const ListSN: React.FC<ListSNProps> = ({ user }) => {
                 search: searchTerm,
                 startDate,
                 endDate,
-                salesforce: salesFilter !== 'all' ? salesFilter : undefined,
-                tap: tapFilter !== 'all' ? tapFilter : undefined
+                salesforce: selectedSales,
+                tap: selectedTaps
             });
             
             if (res && res.data && Array.isArray(res.data)) {
@@ -63,6 +152,7 @@ const ListSN: React.FC<ListSNProps> = ({ user }) => {
                 setHasLoaded(true);
             } else {
                 setData([]);
+                setPagination(prev => ({ ...prev, total: 0, totalPages: 1 }));
             }
         } catch (error) {
             console.error("Failed to load adisti data", error);
@@ -141,28 +231,27 @@ const ListSN: React.FC<ListSNProps> = ({ user }) => {
             </div>
          </div>
 
-         {/* Sales Filter */}
+         {/* Sales Filter (Multi Select) */}
          <div className="lg:col-span-3">
-             <span className="text-[10px] font-bold text-slate-500 uppercase mb-1 block">Salesforce</span>
-             <input
-                 type="text"
-                 placeholder="Semua Sales"
-                 className={`w-full px-3 py-2 text-sm rounded-lg border border-slate-300 focus:ring-2 focus:ring-purple-500 outline-none ${user.assigned_salesforce ? 'bg-slate-100 text-slate-500 cursor-not-allowed' : ''}`}
-                 value={salesFilter === 'all' ? '' : salesFilter}
-                 onChange={(e) => !user.assigned_salesforce && setSalesFilter(e.target.value || 'all')}
-                 disabled={!!user.assigned_salesforce}
+             <MultiSelect 
+                label="Salesforce"
+                placeholder="Semua Sales"
+                options={filterOptions.sales}
+                selected={selectedSales}
+                onChange={setSelectedSales}
+                disabled={!!user.assigned_salesforce}
              />
          </div>
 
+         {/* TAP Filter (Multi Select) */}
          <div className="lg:col-span-3">
-            <span className="text-[10px] font-bold text-slate-500 uppercase mb-1 block">TAP Area</span>
-             <input
-                 type="text"
-                 placeholder="Semua TAP"
-                 className={`w-full px-3 py-2 text-sm rounded-lg border border-slate-300 focus:ring-2 focus:ring-purple-500 outline-none ${user.assigned_tap ? 'bg-slate-100 text-slate-500 cursor-not-allowed' : ''}`}
-                 value={tapFilter === 'all' ? '' : tapFilter}
-                 onChange={(e) => !user.assigned_tap && setTapFilter(e.target.value || 'all')}
-                 disabled={!!user.assigned_tap}
+             <MultiSelect 
+                label="TAP Area"
+                placeholder="Semua TAP"
+                options={filterOptions.taps}
+                selected={selectedTaps}
+                onChange={setSelectedTaps}
+                disabled={!!user.assigned_tap}
              />
          </div>
 
@@ -208,14 +297,18 @@ const ListSN: React.FC<ListSNProps> = ({ user }) => {
                 <div className="p-2 bg-blue-100 text-blue-600 rounded-lg"><Users size={18} /></div>
                 <div>
                     <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Salesforce</p>
-                    <p className="text-sm font-bold text-slate-800 leading-none mt-1 truncate max-w-[100px]">{salesFilter === 'all' ? 'All' : salesFilter}</p>
+                    <p className="text-sm font-bold text-slate-800 leading-none mt-1 truncate max-w-[100px]">
+                        {selectedSales.length > 0 ? (selectedSales.length === 1 ? selectedSales[0] : `${selectedSales.length} Selected`) : 'All'}
+                    </p>
                 </div>
             </div>
             <div className="bg-white p-3 rounded-xl shadow-sm border border-slate-200 flex items-center space-x-3">
                 <div className="p-2 bg-orange-100 text-orange-600 rounded-lg"><MapPin size={18} /></div>
                 <div>
                     <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">TAP Area</p>
-                    <p className="text-sm font-bold text-slate-800 leading-none mt-1 truncate max-w-[100px]">{tapFilter === 'all' ? 'All' : tapFilter}</p>
+                    <p className="text-sm font-bold text-slate-800 leading-none mt-1 truncate max-w-[100px]">
+                        {selectedTaps.length > 0 ? (selectedTaps.length === 1 ? selectedTaps[0] : `${selectedTaps.length} Selected`) : 'All'}
+                    </p>
                 </div>
             </div>
             <div className="bg-white p-3 rounded-xl shadow-sm border border-slate-200 flex items-center space-x-3">
