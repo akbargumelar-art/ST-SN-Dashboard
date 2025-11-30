@@ -42,8 +42,9 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess, setIsGlobalProcessing 
       example = "123456789012;HVC;Kartu Sakti 10GB;Voucher Fisik;Gudang Jakarta;CVS KNG 05;TAP Pasar Baru;RS-99901";
       filename = "template_db_report_sn.csv";
     } else if (uploadMode === 'update') {
-      headers = "sn_number;sellthru_date;id_digipos;nama_outlet;price;transaction_id";
-      example = "123456789012;2025-11-27;DG-10001;Outlet Berkah Jaya;25000;TRX-ABC1234\n987654321098;2025-11-27;DG-10002;Cellular Maju;50000;TRX-XYZ9876";
+      // UPDATED TEMPLATE: Added Product, Salesforce, Tap
+      headers = "sn_number;sellthru_date;id_digipos;nama_outlet;price;transaction_id;product_name;salesforce_name;tap";
+      example = "123456789012;2025-11-27;DG-10001;Outlet Berkah;25000;TRX-1;Voucher 10GB;Agus Sarwoedi;Tap Palimanan\n987654321098;2025-11-27;DG-10002;Cellular Maju;50000;TRX-2;Voucher 2.5GB;Budi Santoso;Tap Kota";
       filename = "template_db_sellthru.csv";
     } else if (uploadMode === 'topup') {
       headers = "transaction_id;transaction_date;sender;receiver;transaction_type;amount;currency;remarks;salesforce;tap;id_digipos;nama_outlet";
@@ -203,7 +204,7 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess, setIsGlobalProcessing 
                         });
                     }
                 } else if (mode === 'update') {
-                     // Fallback Order: SN, Date, Digi, Outlet, Price, TrxID
+                     // Fallback Order: SN, Date, Digi, Outlet, Price, TrxID, Prod, SF, Tap
                      if (parts[0]) {
                         const priceStr = parts[4] ? parts[4].replace(/[^0-9]/g, '') : '0';
                         items.push({
@@ -212,7 +213,10 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess, setIsGlobalProcessing 
                             id_digipos: parts[2],
                             nama_outlet: parts[3],
                             price: priceStr ? parseInt(priceStr) : 0,
-                            transaction_id: parts[5]
+                            transaction_id: parts[5],
+                            product_name: parts[6] || '',
+                            salesforce_name: parts[7] || '',
+                            tap: parts[8] || ''
                         });
                      }
                 }
@@ -278,7 +282,16 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess, setIsGlobalProcessing 
                 amountIdx = findIdx(['price', 'harga', 'amount']);
                 trxIdIdx = findIdx(['transactionid', 'trxid']);
                 
-                if (snIdx === -1) { snIdx=0; dateIdx=1; digiIdx=2; outletIdx=3; amountIdx=4; trxIdIdx=5; }
+                // NEW COLUMNS for Sellthru
+                prodIdx = findIdx(['productname', 'product', 'produk']);
+                sfIdx = findIdx(['salesforcename', 'salesforce', 'sf']);
+                tapIdx = findIdx(['tap']);
+                
+                if (snIdx === -1) { 
+                    snIdx=0; dateIdx=1; digiIdx=2; outletIdx=3; amountIdx=4; trxIdIdx=5; 
+                    // Assume additional cols are appended
+                    prodIdx=6; sfIdx=7; tapIdx=8;
+                }
             }
             else { 
                 // Topup & Bucket
@@ -350,7 +363,10 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess, setIsGlobalProcessing 
                             id_digipos: getVal(parts, digiIdx),
                             nama_outlet: getVal(parts, outletIdx),
                             price: priceStr ? parseInt(priceStr) : 0,
-                            transaction_id: getVal(parts, trxIdIdx)
+                            transaction_id: getVal(parts, trxIdIdx),
+                            product_name: getVal(parts, prodIdx),
+                            salesforce_name: getVal(parts, sfIdx),
+                            tap: getVal(parts, tapIdx)
                         });
                     }
                 }

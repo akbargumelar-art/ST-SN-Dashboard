@@ -176,7 +176,7 @@ app.put('/api/serial-numbers/:id/status', authenticateToken, async (req, res) =>
 
 // POST Bulk Sellthru (Populate from Master SN)
 app.post('/api/sellthru/bulk', authenticateToken, async (req, res) => {
-    const items = req.body; // [{ sn_number, id_digipos, nama_outlet, price, transaction_id, sellthru_date }]
+    const items = req.body; // [{ sn_number, id_digipos, nama_outlet, price, transaction_id, sellthru_date, product_name, salesforce_name, tap }]
     if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ message: 'No data provided' });
 
     const connection = await db.getConnection();
@@ -203,12 +203,13 @@ app.post('/api/sellthru/bulk', authenticateToken, async (req, res) => {
 
         // 3. Prepare Insert Data (ALWAYS INSERT, even if orphan)
         for (const item of items) {
-            const master = masterMap.get(item.sn_number) || {
-                product_name: 'Unknown Item',
-                salesforce_name: 'Unknown Sales',
-                tap: 'Unknown Tap',
-                flag: '-'
-            };
+            const master = masterMap.get(item.sn_number) || {};
+            
+            // Prioritize Data from Uploaded CSV (if present), otherwise fallback to Master DB
+            const finalProduct = item.product_name || master.product_name || 'Unknown Item';
+            const finalSales = item.salesforce_name || master.salesforce_name || 'Unknown Sales';
+            const finalTap = item.tap || master.tap || 'Unknown Tap';
+            const finalFlag = master.flag || '-'; // Flag usually comes from Master
 
             insertValues.push([
                 item.sn_number,
@@ -217,10 +218,10 @@ app.post('/api/sellthru/bulk', authenticateToken, async (req, res) => {
                 item.nama_outlet || '-',
                 item.price || 0,
                 item.transaction_id || '-',
-                master.product_name,
-                master.salesforce_name,
-                master.tap,
-                master.flag
+                finalProduct,
+                finalSales,
+                finalTap,
+                finalFlag
             ]);
 
             if (masterMap.has(item.sn_number)) {
