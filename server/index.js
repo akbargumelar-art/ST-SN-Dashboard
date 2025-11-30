@@ -230,11 +230,15 @@ app.post('/api/sellthru/bulk', authenticateToken, async (req, res) => {
         }
 
         if (insertValues.length > 0) {
-            // 4. Insert into sellthru_transactions
+            // 4. Insert into sellthru_transactions (REPLACE ON DUPLICATE)
             const insertQuery = `
                 INSERT INTO sellthru_transactions 
                 (sn_number, sellthru_date, id_digipos, nama_outlet, price, transaction_id, product_name, salesforce_name, tap, flag)
                 VALUES ?
+                ON DUPLICATE KEY UPDATE
+                sellthru_date=VALUES(sellthru_date), id_digipos=VALUES(id_digipos), nama_outlet=VALUES(nama_outlet),
+                price=VALUES(price), transaction_id=VALUES(transaction_id), product_name=VALUES(product_name),
+                salesforce_name=VALUES(salesforce_name), tap=VALUES(tap), flag=VALUES(flag)
             `;
             await connection.query(insertQuery, [insertValues]);
         }
@@ -606,7 +610,16 @@ app.get('/api/topup', authenticateToken, async (req, res) => {
 app.post('/api/topup/bulk', authenticateToken, async (req, res) => {
     const items = req.body;
     try {
-        const query = `INSERT INTO topup_transactions (transaction_id, transaction_date, sender, receiver, transaction_type, amount, currency, remarks, salesforce, tap, id_digipos, nama_outlet) VALUES ?`;
+        const query = `
+            INSERT INTO topup_transactions 
+            (transaction_id, transaction_date, sender, receiver, transaction_type, amount, currency, remarks, salesforce, tap, id_digipos, nama_outlet) 
+            VALUES ?
+            ON DUPLICATE KEY UPDATE
+            transaction_date=VALUES(transaction_date), sender=VALUES(sender), receiver=VALUES(receiver),
+            transaction_type=VALUES(transaction_type), amount=VALUES(amount), currency=VALUES(currency),
+            remarks=VALUES(remarks), salesforce=VALUES(salesforce), tap=VALUES(tap), 
+            id_digipos=VALUES(id_digipos), nama_outlet=VALUES(nama_outlet)
+        `;
         const values = items.map(i => [i.transaction_id, i.transaction_date, i.sender, i.receiver, i.transaction_type, i.amount, i.currency, i.remarks, i.salesforce, i.tap, i.id_digipos, i.nama_outlet]);
         await db.query(query, [values]);
         res.json({ message: 'Topup uploaded' });
@@ -623,7 +636,16 @@ app.get('/api/bucket', authenticateToken, async (req, res) => {
 app.post('/api/bucket/bulk', authenticateToken, async (req, res) => {
     const items = req.body;
     try {
-        const query = `INSERT INTO bucket_transactions (transaction_id, transaction_date, sender, receiver, transaction_type, amount, currency, remarks, salesforce, tap, id_digipos, nama_outlet) VALUES ?`;
+        const query = `
+            INSERT INTO bucket_transactions 
+            (transaction_id, transaction_date, sender, receiver, transaction_type, amount, currency, remarks, salesforce, tap, id_digipos, nama_outlet) 
+            VALUES ?
+            ON DUPLICATE KEY UPDATE
+            transaction_date=VALUES(transaction_date), sender=VALUES(sender), receiver=VALUES(receiver),
+            transaction_type=VALUES(transaction_type), amount=VALUES(amount), currency=VALUES(currency),
+            remarks=VALUES(remarks), salesforce=VALUES(salesforce), tap=VALUES(tap), 
+            id_digipos=VALUES(id_digipos), nama_outlet=VALUES(nama_outlet)
+        `;
         const values = items.map(i => [i.transaction_id, i.transaction_date, i.sender, i.receiver, i.transaction_type, i.amount, i.currency, i.remarks, i.salesforce, i.tap, i.id_digipos, i.nama_outlet]);
         await db.query(query, [values]);
         res.json({ message: 'Bucket uploaded' });
@@ -640,6 +662,10 @@ app.post('/api/adisti/bulk', authenticateToken, async (req, res) => {
             INSERT INTO adisti_transactions 
             (created_at, sn_number, warehouse, product_name, salesforce_name, tap, no_rs, id_digipos, nama_outlet) 
             VALUES ?
+            ON DUPLICATE KEY UPDATE
+            created_at=VALUES(created_at), warehouse=VALUES(warehouse), product_name=VALUES(product_name),
+            salesforce_name=VALUES(salesforce_name), tap=VALUES(tap), no_rs=VALUES(no_rs),
+            id_digipos=VALUES(id_digipos), nama_outlet=VALUES(nama_outlet)
         `;
         const values = items.map(i => [
             i.created_at, i.sn_number, i.warehouse, i.product_name, i.salesforce_name, i.tap, i.no_rs, i.id_digipos, i.nama_outlet
