@@ -1,151 +1,160 @@
-
-import React, { useState, useEffect, useRef } from 'react';
-import { AdistiTransaction, User } from '../types';
-import { getAdistiTransactions, getAdistiFilters, getAdistiSummaryTree } from '../services/storage';
-import { Search, List, Database, Users, MapPin, Package, ChevronLeft, ChevronRight, Loader2, PlayCircle, Filter, ChevronDown, Check } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { User, UserRole, SerialNumber, AdistiTransaction } from '../types';
+import { getAdistiTransactions, getAdistiFilters, downloadAdistiReport, getAdistiSummaryTree } from '../services/storage';
+import { Search, Download, ChevronLeft, ChevronRight, ArrowUpDown, Loader2, ChevronDown, ChevronUp, Package, Users, MapPin, CheckSquare, Square } from 'lucide-react';
 
 interface ListSNProps {
-  data?: any; 
   user: User;
+  data: SerialNumber[];
 }
 
-// Multi Select Component
-const MultiSelect = ({ label, options, selected, onChange, disabled, placeholder }: any) => {
-    const [isOpen, setIsOpen] = useState(false);
-    const containerRef = useRef<HTMLDivElement>(null);
-
-    useEffect(() => {
-        const handleClickOutside = (event: MouseEvent) => {
-            if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-                setIsOpen(false);
-            }
-        };
-        document.addEventListener('mousedown', handleClickOutside);
-        return () => document.removeEventListener('mousedown', handleClickOutside);
-    }, []);
-
-    const toggleOption = (option: string) => {
-        if (selected.includes(option)) {
-            onChange(selected.filter((item: string) => item !== option));
-        } else {
-            onChange([...selected, option]);
-        }
-    };
-
-    const isAllSelected = selected.length === options.length && options.length > 0;
-    const toggleAll = () => {
-        if (isAllSelected) onChange([]);
-        else onChange([...options]);
-    };
-
-    return (
-        <div className="relative" ref={containerRef}>
-            <span className="text-[10px] font-bold text-slate-500 uppercase mb-1 block">{label}</span>
-            <div 
-                className={`w-full px-3 py-2 text-sm rounded-lg border bg-white flex justify-between items-center cursor-pointer ${disabled ? 'bg-slate-100 cursor-not-allowed border-slate-200 text-slate-400' : 'border-slate-300 hover:border-purple-400'}`}
-                onClick={() => !disabled && setIsOpen(!isOpen)}
-            >
-                <span className="truncate">
-                    {selected.length === 0 ? placeholder : `${selected.length} Terpilih`}
-                </span>
-                <ChevronDown size={14} className={`transition-transform ${isOpen ? 'rotate-180' : ''}`}/>
-            </div>
-
-            {isOpen && !disabled && (
-                <div className="absolute z-50 top-full mt-1 left-0 w-full bg-white border border-slate-200 rounded-lg shadow-xl max-h-60 overflow-y-auto">
-                    <div 
-                        className="px-3 py-2 border-b border-slate-100 flex items-center gap-2 hover:bg-slate-50 cursor-pointer font-bold text-xs text-purple-600"
-                        onClick={toggleAll}
-                    >
-                        <div className={`w-4 h-4 border rounded flex items-center justify-center ${isAllSelected ? 'bg-purple-600 border-purple-600' : 'border-slate-300'}`}>
-                             {isAllSelected && <Check size={12} className="text-white"/>}
-                        </div>
-                        Pilih Semua
-                    </div>
-                    {options.map((opt: string) => {
-                        const isSelected = selected.includes(opt);
-                        return (
-                            <div 
-                                key={opt} 
-                                className="px-3 py-2 flex items-center gap-2 hover:bg-slate-50 cursor-pointer text-sm text-slate-700"
-                                onClick={() => toggleOption(opt)}
-                            >
-                                <div className={`w-4 h-4 border rounded flex items-center justify-center ${isSelected ? 'bg-purple-600 border-purple-600' : 'border-slate-300'}`}>
-                                    {isSelected && <Check size={12} className="text-white"/>}
-                                </div>
-                                <span className="truncate">{opt}</span>
-                            </div>
-                        )
-                    })}
-                </div>
-            )}
-        </div>
-    );
+type SortConfig = {
+  key: string;
+  direction: 'asc' | 'desc';
 };
 
-interface SummaryTreeItemProps {
-  item: any;
-  level: number;
+// --- Custom Multi-Select Dropdown Component ---
+interface MultiSelectProps {
+  options: string[];
+  selected: string[];
+  onChange: (selected: string[]) => void;
+  placeholder: string;
+  disabled?: boolean;
 }
 
-// Recursive Tree Item Component
+const MultiSelectDropdown: React.FC<MultiSelectProps> = ({ options, selected, onChange, placeholder, disabled }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const toggleOption = (option: string) => {
+    if (selected.includes(option)) {
+      onChange(selected.filter(item => item !== option));
+    } else {
+      onChange([...selected, option]);
+    }
+  };
+
+  const toggleAll = () => {
+    if (selected.length === options.length) {
+      onChange([]);
+    } else {
+      onChange(options);
+    }
+  };
+
+  const displayText = selected.length === 0 
+    ? placeholder 
+    : selected.length === options.length 
+      ? `Semua (${options.length})` 
+      : `${selected.length} Terpilih`;
+
+  return (
+    <div className="relative w-full" ref={dropdownRef}>
+      <button 
+        onClick={() => !disabled && setIsOpen(!isOpen)}
+        disabled={disabled}
+        className={`w-full px-3 py-2 text-sm rounded-lg border flex justify-between items-center text-left transition-colors
+          ${disabled ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' : 'bg-white border-slate-300 text-slate-700 hover:border-purple-500 focus:ring-2 focus:ring-purple-500'}
+        `}
+      >
+        <span className="truncate">{displayText}</span>
+        <ChevronDown size={14} className={`text-slate-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+      </button>
+
+      {isOpen && (
+        <div className="absolute z-50 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+          <div 
+            onClick={toggleAll}
+            className="px-3 py-2 border-b border-slate-100 flex items-center gap-2 cursor-pointer hover:bg-slate-50 text-sm font-bold text-purple-700"
+          >
+            {selected.length === options.length ? <CheckSquare size={16} /> : <Square size={16} />}
+            Pilih Semua
+          </div>
+          {options.map(option => (
+            <div 
+              key={option}
+              onClick={() => toggleOption(option)}
+              className="px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-slate-50 text-sm text-slate-700"
+            >
+              {selected.includes(option) ? <CheckSquare size={16} className="text-purple-600" /> : <Square size={16} className="text-slate-300" />}
+              {option}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// --- Summary Tree Component (Accordion) ---
+interface SummaryTreeItemProps {
+    item: any; // Using any for simplicity in tree structure
+    level: number;
+}
+  
 const SummaryTreeItem: React.FC<SummaryTreeItemProps> = ({ item, level }) => {
     const [isExpanded, setIsExpanded] = useState(false);
+    const hasChildren = item.children && item.children.length > 0;
     
-    // Level 0 = TAP, Level 1 = Sales, Level 2 = Product
-    const getIcon = () => {
-        if (level === 0) return <MapPin size={16} className="text-orange-500" />;
-        if (level === 1) return <Users size={16} className="text-blue-500" />;
-        return <Package size={16} className="text-emerald-500" />;
-    };
-
-    const isLeaf = !item.children || item.children.length === 0;
-
+    // Icon based on level
+    let Icon = MapPin;
+    let colorClass = "text-purple-600 bg-purple-100";
+    if (level === 1) { Icon = Users; colorClass = "text-blue-600 bg-blue-100"; }
+    if (level === 2) { Icon = Package; colorClass = "text-emerald-600 bg-emerald-100"; }
+  
     return (
-        <div className="w-full">
-            <div 
-                className={`
-                    flex items-center justify-between p-3 border-b border-slate-100 
-                    ${!isLeaf ? 'cursor-pointer hover:bg-slate-50' : ''}
-                    ${level === 0 ? 'bg-white' : level === 1 ? 'bg-slate-50/50' : 'bg-slate-50'}
-                `}
-                style={{ paddingLeft: `${(level * 20) + 12}px` }}
-                onClick={() => !isLeaf && setIsExpanded(!isExpanded)}
-            >
-                <div className="flex items-center gap-3">
-                    {!isLeaf && (
-                        <ChevronRight size={16} className={`text-slate-400 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
-                    )}
-                    {isLeaf && <div className="w-4" />}
-                    
-                    <div className="flex items-center gap-2">
-                        {getIcon()}
-                        <span className={`text-sm ${level === 0 ? 'font-bold text-slate-800' : 'text-slate-700'}`}>
-                            {item.name}
-                        </span>
-                    </div>
-                </div>
-                <div className="flex items-center gap-4">
-                    <span className="text-sm font-bold text-slate-800">{item.total.toLocaleString()} SN</span>
-                </div>
-            </div>
-            {isExpanded && item.children && (
-                <div className="w-full">
-                    {item.children.map((child: any, idx: number) => (
-                        <SummaryTreeItem key={`${child.name}-${idx}`} item={child} level={level + 1} />
-                    ))}
-                </div>
-            )}
+      <div className="border-b border-slate-100 last:border-0">
+        <div 
+          className={`flex items-center justify-between p-3 cursor-pointer hover:bg-slate-50 transition-colors ${level > 0 ? 'bg-slate-50/50' : ''}`}
+          style={{ paddingLeft: `${level * 1.5 + 0.75}rem` }}
+          onClick={() => hasChildren && setIsExpanded(!isExpanded)}
+        >
+          <div className="flex items-center gap-3">
+             {hasChildren && (
+                 <div className={`p-1 rounded-full transition-transform ${isExpanded ? 'rotate-90 bg-slate-200' : 'bg-transparent'}`}>
+                     <ChevronRight size={14} className="text-slate-400" />
+                 </div>
+             )}
+             {!hasChildren && <div className="w-6" />}
+             
+             <div className={`p-1.5 rounded-lg ${colorClass}`}>
+                 <Icon size={16} />
+             </div>
+             <div>
+                 <p className="text-sm font-bold text-slate-700">{item.name}</p>
+             </div>
+          </div>
+          <div className="text-sm font-bold text-slate-800">
+             {(item.total || 0).toLocaleString()} <span className="text-xs font-normal text-slate-500">SN</span>
+          </div>
         </div>
+        
+        {isExpanded && hasChildren && (
+            <div className="animate-fade-in">
+                {item.children.map((child: any, idx: number) => (
+                    <SummaryTreeItem key={`${child.name}-${idx}`} item={child} level={level + 1} />
+                ))}
+            </div>
+        )}
+      </div>
     );
 };
 
-
 const ListSN: React.FC<ListSNProps> = ({ user }) => {
-  const [data, setData] = useState<AdistiTransaction[]>([]);
+  const [transactions, setTransactions] = useState<AdistiTransaction[]>([]);
+  const [loading, setLoading] = useState(false);
   const [summaryTree, setSummaryTree] = useState<any[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [hasLoaded, setHasLoaded] = useState(false);
+  const [loadingSummary, setLoadingSummary] = useState(false);
   
   // Options for Dropdowns
   const [filterOptions, setFilterOptions] = useState<{sales: string[], taps: string[]}>({ sales: [], taps: [] });
@@ -153,278 +162,336 @@ const ListSN: React.FC<ListSNProps> = ({ user }) => {
   // Pagination State
   const [pagination, setPagination] = useState({
       page: 1,
-      limit: 50, 
+      limit: 50,
       total: 0,
       totalPages: 1
   });
 
   // Filter State
   const [searchTerm, setSearchTerm] = useState('');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
   
-  // Array based filters for Multi-Select
+  // DEFAULT DATES: TODAY
+  const [startDate, setStartDate] = useState(new Date().toLocaleDateString('en-CA'));
+  const [endDate, setEndDate] = useState(new Date().toLocaleDateString('en-CA'));
+  
   const [selectedSales, setSelectedSales] = useState<string[]>([]);
-  const [selectedTaps, setSelectedTaps] = useState<string[]>([]);
+  const [selectedTap, setSelectedTap] = useState<string[]>([]);
+  const [hasSearched, setHasSearched] = useState(false); // Filter First Logic
+  
+  // Sorting
+  const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'created_at', direction: 'desc' });
 
-  // INIT: Load Filter Options (Initial Load)
+  // Load Filters on Mount
   useEffect(() => {
-      const loadOptions = async () => {
-          try {
-              let initialTaps: string[] = [];
-              if (user.assigned_tap) initialTaps.push(user.assigned_tap);
-
-              const res = await getAdistiFilters(initialTaps);
-              setFilterOptions(res);
-              
-              if (user.assigned_salesforce) {
-                  setSelectedSales([user.assigned_salesforce]);
-              }
-              if (user.assigned_tap) {
-                  setSelectedTaps([user.assigned_tap]);
-              }
-          } catch (e) { console.error(e); }
-      };
-      loadOptions();
+    const loadFilters = async () => {
+        try {
+            const filters = await getAdistiFilters();
+            setFilterOptions(filters);
+            
+            // Auto-Assign logic for Restricted Users
+            if (user.assigned_tap) {
+                const myTaps = user.assigned_tap.split(',').map(t => t.trim());
+                setSelectedTap(myTaps);
+            }
+            if (user.assigned_salesforce) {
+                const mySales = user.assigned_salesforce.split(',').map(s => s.trim());
+                setSelectedSales(mySales);
+            }
+        } catch (error) {
+            console.error("Failed to load filters", error);
+        }
+    };
+    loadFilters();
   }, [user]);
 
-  // UPDATE SALESFORCE DROPDOWN WHEN TAP CHANGES (Cascading Filter)
+  // Cascading Dropdown: Load Sales based on Selected TAP
   useEffect(() => {
-      if (user.assigned_tap) return; 
-
-      const updateSalesDropdown = async () => {
-          try {
-             const res = await getAdistiFilters(selectedTaps);
-             setFilterOptions(prev => ({ ...prev, sales: res.sales }));
-          } catch(e) { console.error(e); }
-      };
-
-      updateSalesDropdown();
-  }, [selectedTaps, user.assigned_tap]);
-
-
-  // Main Data Fetcher
-  const loadData = async (pageToLoad = 1) => {
-        setIsLoading(true);
-        try {
-            const filterParams = {
-                page: pageToLoad,
-                limit: pagination.limit,
-                search: searchTerm,
-                startDate,
-                endDate,
-                salesforce: selectedSales,
-                tap: selectedTaps
-            };
-
-            // Parallel fetch: Data and Summary Tree
-            const [dataRes, treeRes] = await Promise.all([
-                getAdistiTransactions(filterParams),
-                getAdistiSummaryTree(filterParams)
-            ]);
-            
-            // Set Table Data
-            if (dataRes && dataRes.data && Array.isArray(dataRes.data)) {
-                setData(dataRes.data);
-                setPagination(prev => ({
-                    ...prev,
-                    total: dataRes.total || 0,
-                    totalPages: dataRes.totalPages || 1,
-                    page: dataRes.page || 1
-                }));
-            }
-
-            // Set Tree Data
-            if (Array.isArray(treeRes)) {
-                setSummaryTree(treeRes);
-            } else {
-                setSummaryTree([]);
-            }
-            
-            setHasLoaded(true);
-
-        } catch (error) {
-            console.error("Failed to load data", error);
-            alert("Gagal memuat data. Silakan coba lagi.");
-        } finally {
-            setIsLoading(false);
+    const updateSalesOptions = async () => {
+        if (selectedTap.length > 0) {
+            const filters = await getAdistiFilters(selectedTap);
+            // Only update sales options, keep existing selected if valid
+            setFilterOptions(prev => ({ ...prev, sales: filters.sales }));
+        } else {
+             // If no tap selected, reload all
+             const filters = await getAdistiFilters();
+             setFilterOptions(filters);
         }
+    };
+    updateSalesOptions();
+  }, [selectedTap]);
+
+  // Fetch Data Function
+  const fetchData = useCallback(async () => {
+      setLoading(true);
+      setLoadingSummary(true);
+      try {
+          const params = {
+              page: pagination.page,
+              limit: pagination.limit,
+              search: searchTerm,
+              startDate,
+              endDate,
+              salesforce: selectedSales,
+              tap: selectedTap,
+              sortBy: sortConfig.key,
+              sortOrder: sortConfig.direction
+          };
+
+          // Parallel Fetch
+          const [result, treeResult] = await Promise.all([
+              getAdistiTransactions(params),
+              getAdistiSummaryTree(params)
+          ]);
+          
+          if (result && Array.isArray(result.data)) {
+              setTransactions(result.data);
+              setPagination(prev => ({
+                  ...prev,
+                  total: result.total || 0,
+                  totalPages: result.totalPages || 1
+              }));
+          } else {
+               if (Array.isArray(result)) {
+                   setTransactions(result);
+               } else {
+                   setTransactions([]);
+               }
+          }
+
+          if (Array.isArray(treeResult)) {
+              setSummaryTree(treeResult);
+          }
+
+          setHasSearched(true);
+
+      } catch (error) {
+          console.error("Failed to fetch Adisti transactions", error);
+          setTransactions([]);
+      } finally {
+          setLoading(false);
+          setLoadingSummary(false);
+      }
+  }, [pagination.page, pagination.limit, searchTerm, startDate, endDate, selectedSales, selectedTap, sortConfig]);
+
+  // Trigger fetch only when pagination changes AFTER initial search
+  useEffect(() => {
+      if (hasSearched) {
+          fetchData();
+      }
+  }, [pagination.page]); // Only trigger on page change, other filters require "Tampilkan" button
+
+  const handleSort = (key: string) => {
+      setSortConfig(current => ({
+          key,
+          direction: current.key === key && current.direction === 'asc' ? 'desc' : 'asc'
+      }));
   };
+
+  const handleDownload = async () => {
+      try {
+          await downloadAdistiReport({
+              search: searchTerm,
+              startDate,
+              endDate,
+              salesforce: selectedSales,
+              tap: selectedTap,
+              sortBy: sortConfig.key,
+              sortOrder: sortConfig.direction
+          });
+      } catch (error) {
+          alert('Gagal mendownload laporan');
+      }
+  };
+
+  const SortableTh = ({ label, sortKey, className = "" }: { label: string, sortKey: string, className?: string }) => (
+    <th 
+      className={`px-4 py-3 font-bold text-slate-900 text-xs uppercase tracking-wider cursor-pointer hover:bg-slate-100 select-none transition-colors sticky top-0 bg-slate-50 z-10 ${className}`}
+      onClick={() => handleSort(sortKey)}
+    >
+      <div className="flex items-center gap-1">
+        {label} <ArrowUpDown size={12} className={`ml-1 inline ${sortConfig.key === sortKey ? 'text-red-600' : 'text-slate-300'}`} />
+      </div>
+    </th>
+  );
 
   return (
     <div className="space-y-6 animate-fade-in h-full flex flex-col">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-slate-200 pb-4 flex-shrink-0">
+      <div className="flex flex-col md:flex-row justify-between items-end gap-4 border-b border-slate-200 pb-4 flex-shrink-0">
         <div>
-          <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-            <Database className="text-purple-600" />
-            List SN (Adisti)
-          </h2>
+          <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">List SN (Adisti)</h2>
           <p className="text-slate-500">Database Master Distribusi</p>
         </div>
       </div>
 
-      {/* FILTERS */}
-      <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4 flex-shrink-0">
-          <div className="lg:col-span-2">
-            <span className="text-[10px] font-bold text-slate-500 uppercase mb-1 block">Cari SN / Produk</span>
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-              <input 
-                type="text" 
-                placeholder="Ketik disini..." 
-                className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                value={searchTerm}
-                onChange={e => setSearchTerm(e.target.value)}
-              />
+      {/* Summary Section (Tree Table) */}
+      {hasSearched && (
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex-shrink-0">
+            <div className="bg-slate-50 px-4 py-3 border-b border-slate-200 flex justify-between items-center">
+                <h3 className="font-bold text-slate-700 text-sm">Summary Kontribusi (Hierarchy)</h3>
+                <span className="text-xs text-slate-500">Tap &gt; Sales &gt; Produk</span>
             </div>
-          </div>
-          
-          <div>
-            <span className="text-[10px] font-bold text-slate-500 uppercase mb-1 block">Dari Tanggal</span>
-            <input 
-                type="date" 
-                className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                value={startDate}
-                onChange={e => setStartDate(e.target.value)}
-            />
-          </div>
-          <div>
-            <span className="text-[10px] font-bold text-slate-500 uppercase mb-1 block">Sampai</span>
-            <input 
-                type="date" 
-                className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                value={endDate}
-                onChange={e => setEndDate(e.target.value)}
-            />
-          </div>
+            <div className="max-h-64 overflow-y-auto">
+                {loadingSummary ? (
+                    <div className="p-8 text-center"><Loader2 className="animate-spin mx-auto text-purple-600"/></div>
+                ) : summaryTree.length === 0 ? (
+                    <div className="p-4 text-center text-sm text-slate-500">Tidak ada data summary.</div>
+                ) : (
+                    summaryTree.map((tap, idx) => (
+                        <SummaryTreeItem key={`${tap.name}-${idx}`} item={tap} level={0} />
+                    ))
+                )}
+            </div>
+        </div>
+      )}
 
-          <div>
-             <MultiSelect 
-                label="TAP AREA" 
-                placeholder="Semua TAP"
+      {/* Filters */}
+      <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4 flex-shrink-0">
+         <div className="lg:col-span-2 relative">
+             <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Cari SN / Produk</label>
+             <div className="relative">
+                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                 <input 
+                    type="text" 
+                    placeholder="Ketik disini..." 
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-slate-300 outline-none focus:ring-2 focus:ring-purple-500"
+                 />
+             </div>
+         </div>
+         
+         <div>
+             <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Dari Tanggal</label>
+             <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 outline-none focus:ring-2 focus:ring-purple-500" />
+         </div>
+
+         <div>
+             <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Sampai</label>
+             <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 outline-none focus:ring-2 focus:ring-purple-500" />
+         </div>
+
+         <div>
+             <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Tap Area</label>
+             <MultiSelectDropdown 
                 options={filterOptions.taps} 
-                selected={selectedTaps} 
-                onChange={setSelectedTaps}
-                disabled={!!user.assigned_tap}
+                selected={selectedTap} 
+                onChange={setSelectedTap} 
+                placeholder="Semua TAP"
+                disabled={!!user.assigned_tap} // Lock if assigned
              />
-          </div>
-          <div>
-             <MultiSelect 
-                label="SALESFORCE" 
-                placeholder="Semua Sales"
+         </div>
+
+         <div>
+             <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Salesforce</label>
+             <MultiSelectDropdown 
                 options={filterOptions.sales} 
                 selected={selectedSales} 
-                onChange={setSelectedSales}
-                disabled={!!user.assigned_salesforce}
+                onChange={setSelectedSales} 
+                placeholder="Semua Sales"
+                disabled={!!user.assigned_salesforce} // Lock if assigned
              />
-          </div>
+         </div>
       </div>
 
-      <div className="flex justify-end flex-shrink-0">
+      <div className="flex gap-2">
          <button 
-            onClick={() => loadData(1)}
-            disabled={isLoading}
-            className="flex items-center space-x-2 bg-purple-600 hover:bg-purple-700 text-white px-6 py-2 rounded-lg shadow-md transition-all disabled:opacity-50"
+            onClick={() => { setPagination(p => ({...p, page: 1})); fetchData(); }} 
+            className="flex-1 bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 rounded-lg shadow-md transition-all flex justify-center items-center gap-2"
          >
-            {isLoading ? <Loader2 className="animate-spin" size={18}/> : <PlayCircle size={18}/>}
-            <span className="font-bold">Tampilkan Data</span>
+            <Search size={18} /> Tampilkan Data
          </button>
+         {hasSearched && (
+             <button 
+                onClick={handleDownload}
+                className="bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 font-bold py-2 px-4 rounded-lg shadow-sm transition-all flex justify-center items-center gap-2"
+             >
+                <Download size={18} /> Export CSV
+             </button>
+         )}
       </div>
 
-      {/* CONTENT AREA */}
-      {!hasLoaded ? (
-          <div className="flex-1 flex flex-col items-center justify-center text-slate-400 min-h-[300px] border-2 border-dashed border-slate-200 rounded-xl bg-slate-50/50">
-             <Filter size={48} className="mb-4 text-slate-300" />
-             <p className="font-medium">Silakan atur filter dan klik "Tampilkan Data"</p>
-          </div>
-      ) : (
-          <div className="flex flex-col gap-6 flex-1 min-h-0">
-             
-             {/* SUMMARY TABLE (COLLAPSIBLE) */}
-             <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex-shrink-0 flex flex-col max-h-[40vh]">
-                 <div className="bg-purple-50 px-4 py-3 border-b border-purple-100 flex justify-between items-center">
-                    <h3 className="text-sm font-bold text-purple-800 flex items-center gap-2">
-                        <List size={16}/> Summary Grouping
-                    </h3>
-                    <span className="text-xs text-purple-600 bg-white px-2 py-0.5 rounded-full border border-purple-100">
-                        {summaryTree.length} TAP Area
-                    </span>
-                 </div>
-                 <div className="overflow-y-auto flex-1">
-                    {summaryTree.length === 0 ? (
-                        <div className="p-4 text-center text-sm text-slate-500">Tidak ada data summary.</div>
-                    ) : (
-                        summaryTree.map((tapNode, idx) => (
-                            <SummaryTreeItem key={`${tapNode.name}-${idx}`} item={tapNode} level={0} />
-                        ))
-                    )}
-                 </div>
-             </div>
-
-             {/* MAIN DATA TABLE */}
-             <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex-1 flex flex-col min-h-0">
-                <div className="px-4 py-3 border-b border-slate-200 flex justify-between items-center bg-slate-50 sticky top-0 z-30">
-                    <div className="flex items-center gap-2">
-                        <span className="text-xs font-bold text-slate-500">Total Records:</span>
-                        <span className="text-sm font-bold text-slate-800">{pagination.total.toLocaleString()}</span>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                        <button 
-                            disabled={pagination.page === 1 || isLoading}
-                            onClick={() => loadData(pagination.page - 1)}
-                            className="p-1 rounded-md hover:bg-white disabled:opacity-30 transition-colors border border-transparent hover:border-slate-200"
-                        >
-                            <ChevronLeft size={18} />
-                        </button>
-                        <span className="text-xs font-medium text-slate-600">
-                            Page {pagination.page} of {pagination.totalPages}
-                        </span>
-                        <button 
-                            disabled={pagination.page >= pagination.totalPages || isLoading}
-                            onClick={() => loadData(pagination.page + 1)}
-                            className="p-1 rounded-md hover:bg-white disabled:opacity-30 transition-colors border border-transparent hover:border-slate-200"
-                        >
-                            <ChevronRight size={18} />
-                        </button>
-                    </div>
-                </div>
-
+      {/* Table Section */}
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex-1 flex flex-col min-h-0 relative">
+        {loading && (
+            <div className="absolute inset-0 bg-white/60 z-30 flex items-center justify-center backdrop-blur-[1px]">
+                <Loader2 className="animate-spin text-purple-600" size={32} />
+            </div>
+        )}
+        
+        {!hasSearched ? (
+            <div className="flex-1 flex flex-col items-center justify-center text-slate-400 p-8">
+                <Search size={48} className="mb-4 opacity-20" />
+                <p className="font-bold text-lg">Menunggu Filter</p>
+                <p className="text-sm">Silakan pilih filter tanggal/area lalu klik "Tampilkan Data"</p>
+            </div>
+        ) : (
+            <>
                 <div className="overflow-y-auto flex-1">
-                  <table className="w-full text-left border-collapse">
+                <table className="w-full text-left border-collapse">
                     <thead className="bg-slate-50 border-b border-slate-200 sticky top-0 z-20">
-                      <tr>
-                        <th className="px-4 py-3 font-bold text-slate-900 text-xs uppercase tracking-wider">Tanggal</th>
-                        <th className="px-4 py-3 font-bold text-slate-900 text-xs uppercase tracking-wider">No TR (SN)</th>
-                        <th className="px-4 py-3 font-bold text-slate-900 text-xs uppercase tracking-wider">Product</th>
-                        <th className="px-4 py-3 font-bold text-slate-900 text-xs uppercase tracking-wider">Salesforce</th>
-                        <th className="px-4 py-3 font-bold text-slate-900 text-xs uppercase tracking-wider">TAP</th>
-                        <th className="px-4 py-3 font-bold text-slate-900 text-xs uppercase tracking-wider">No RS</th>
-                        <th className="px-4 py-3 font-bold text-slate-900 text-xs uppercase tracking-wider">ID Digipos</th>
-                        <th className="px-4 py-3 font-bold text-slate-900 text-xs uppercase tracking-wider">Outlet</th>
-                      </tr>
+                    <tr>
+                        <SortableTh label="TANGGAL" sortKey="created_at" />
+                        <SortableTh label="NOTR (SN)" sortKey="sn_number" />
+                        <SortableTh label="PRODUCT" sortKey="product_name" />
+                        <SortableTh label="SALESFORCE" sortKey="salesforce_name" />
+                        <SortableTh label="TAP" sortKey="tap" />
+                        <SortableTh label="NO RS" sortKey="no_rs" />
+                        <SortableTh label="ID DIGIPOS" sortKey="id_digipos" />
+                        <SortableTh label="OUTLET" sortKey="nama_outlet" />
+                    </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {data.map((item) => (
-                        <tr key={item.id} className="hover:bg-purple-50/30 transition-colors">
-                          <td className="px-4 py-3 text-sm text-slate-600 whitespace-nowrap">{item.created_at}</td>
-                          <td className="px-4 py-3 font-mono text-sm font-bold text-slate-800">{item.sn_number}</td>
-                          <td className="px-4 py-3 text-sm text-slate-700">{item.product_name}</td>
-                          <td className="px-4 py-3 text-sm text-slate-600">{item.salesforce_name}</td>
-                          <td className="px-4 py-3 text-sm text-slate-600">{item.tap}</td>
-                          <td className="px-4 py-3 text-sm font-mono text-slate-500">{item.no_rs}</td>
-                          <td className="px-4 py-3 text-sm font-mono text-slate-500">{item.id_digipos}</td>
-                          <td className="px-4 py-3 text-sm text-slate-600">{item.nama_outlet}</td>
+                    {transactions.length > 0 ? (
+                        transactions.map((item, idx) => (
+                            <tr key={item.id || idx} className="hover:bg-purple-50/30 transition-colors">
+                            <td className="px-4 py-3 text-sm text-slate-600 whitespace-nowrap">
+                                {item.created_at ? new Date(item.created_at).toLocaleDateString('id-ID', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '-'}
+                            </td>
+                            <td className="px-4 py-3 font-mono text-sm font-bold text-slate-800">{item.sn_number}</td>
+                            <td className="px-4 py-3 text-sm text-slate-700 max-w-[200px] truncate" title={item.product_name}>{item.product_name}</td>
+                            <td className="px-4 py-3 text-sm text-slate-600 font-medium">{item.salesforce_name}</td>
+                            <td className="px-4 py-3 text-sm text-slate-500">{item.tap}</td>
+                            <td className="px-4 py-3 text-sm text-slate-500">{item.no_rs}</td>
+                            <td className="px-4 py-3 text-sm text-slate-500 font-mono">{item.id_digipos}</td>
+                            <td className="px-4 py-3 text-sm text-slate-600 truncate max-w-[150px]" title={item.nama_outlet}>{item.nama_outlet}</td>
+                            </tr>
+                        ))
+                    ) : (
+                        <tr>
+                            <td colSpan={8} className="px-6 py-12 text-center text-slate-400">
+                                Tidak ada data ditemukan untuk filter ini.
+                            </td>
                         </tr>
-                      ))}
-                      {data.length === 0 && (
-                          <tr><td colSpan={8} className="p-8 text-center text-slate-400 text-sm">Tidak ada data ditemukan.</td></tr>
-                      )}
+                    )}
                     </tbody>
-                  </table>
+                </table>
                 </div>
-             </div>
-          </div>
-      )}
+
+                {/* Pagination */}
+                <div className="bg-slate-50 border-t border-slate-200 p-3 flex items-center justify-between">
+                    <div className="text-xs text-slate-500">
+                        Halaman <strong>{pagination.page}</strong> dari <strong>{pagination.totalPages}</strong> (Total: {pagination.total} Data)
+                    </div>
+                    <div className="flex gap-2">
+                        <button 
+                            disabled={pagination.page <= 1 || loading}
+                            onClick={() => setPagination(p => ({...p, page: p.page - 1}))}
+                            className="p-1.5 rounded-md border border-slate-300 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-50"
+                        >
+                            <ChevronLeft size={16} />
+                        </button>
+                        <button 
+                            disabled={pagination.page >= pagination.totalPages || loading}
+                            onClick={() => setPagination(p => ({...p, page: p.page + 1}))}
+                            className="p-1.5 rounded-md border border-slate-300 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-50"
+                        >
+                            <ChevronRight size={16} />
+                        </button>
+                    </div>
+                </div>
+            </>
+        )}
+      </div>
     </div>
   );
 };

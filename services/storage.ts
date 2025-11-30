@@ -1,5 +1,6 @@
 
 
+
 import { SerialNumber, SNStatus, User, TopupTransaction, AdistiTransaction } from '../types';
 
 const API_URL = '/api';
@@ -159,7 +160,7 @@ export const getAdistiFilters = async (taps?: string[]): Promise<{ sales: string
     return res.json();
 };
 
-// Modified to support query parameters
+// Modified to support query parameters AND SORTING
 export const getAdistiTransactions = async (params?: { 
     page?: number; 
     limit?: number; 
@@ -168,6 +169,8 @@ export const getAdistiTransactions = async (params?: {
     endDate?: string;
     salesforce?: string | string[];
     tap?: string | string[];
+    sortBy?: string;
+    sortOrder?: 'asc' | 'desc';
 }): Promise<any> => {
     let url = `${API_URL}/adisti`;
     
@@ -178,6 +181,8 @@ export const getAdistiTransactions = async (params?: {
         if (params.search) query.append('search', params.search);
         if (params.startDate) query.append('startDate', params.startDate);
         if (params.endDate) query.append('endDate', params.endDate);
+        if (params.sortBy) query.append('sortBy', params.sortBy);
+        if (params.sortOrder) query.append('sortOrder', params.sortOrder);
         
         // Handle Array or comma string for multiple select
         if (params.salesforce) {
@@ -195,6 +200,44 @@ export const getAdistiTransactions = async (params?: {
     
     // Response is now an object { data, total, page, totalPages, summary }
     return res.json();
+};
+
+// Download CSV Export
+export const downloadAdistiReport = async (params?: { 
+    search?: string;
+    startDate?: string;
+    endDate?: string;
+    salesforce?: string | string[];
+    tap?: string | string[];
+    sortBy?: string;
+    sortOrder?: 'asc' | 'desc';
+}) => {
+    let url = `${API_URL}/adisti/export`;
+    if (params) {
+        const query = new URLSearchParams();
+        if (params.search) query.append('search', params.search);
+        if (params.startDate) query.append('startDate', params.startDate);
+        if (params.endDate) query.append('endDate', params.endDate);
+        if (params.sortBy) query.append('sortBy', params.sortBy);
+        if (params.sortOrder) query.append('sortOrder', params.sortOrder);
+        if (params.salesforce) query.append('salesforce', Array.isArray(params.salesforce) ? params.salesforce.join(',') : params.salesforce);
+        if (params.tap) query.append('tap', Array.isArray(params.tap) ? params.tap.join(',') : params.tap);
+        url += `?${query.toString()}`;
+    }
+
+    // Use Fetch with Blob to download file
+    const res = await fetch(url, { headers: getHeaders() });
+    if (!res.ok) throw new Error('Gagal mendownload file');
+    
+    const blob = await res.blob();
+    const downloadUrl = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    a.download = `adisti_report_${new Date().toISOString().split('T')[0]}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(downloadUrl);
+    document.body.removeChild(a);
 };
 
 // Get Hierarchical Summary Tree

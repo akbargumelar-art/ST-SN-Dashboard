@@ -18,7 +18,9 @@ const Sellthru: React.FC<SellthruProps> = ({ data, user }) => {
   // Filters
   const [salesFilter, setSalesFilter] = useState('all');
   const [tapFilter, setTapFilter] = useState('all');
-  const [dateFilter, setDateFilter] = useState('');
+  
+  // DEFAULT DATE: TODAY
+  const [dateFilter, setDateFilter] = useState(new Date().toLocaleDateString('en-CA'));
 
   // Sorting
   const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'created_at', direction: 'desc' });

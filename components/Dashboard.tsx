@@ -30,7 +30,10 @@ const Dashboard: React.FC<DashboardProps> = ({ data, user, refreshData }) => {
   const [salesFilter, setSalesFilter] = useState('all');
   const [tapFilter, setTapFilter] = useState('all');
   const [flagFilter, setFlagFilter] = useState('all');
-  const [dateFilter, setDateFilter] = useState('');
+  
+  // DEFAULT DATE: TODAY (Local Timezone YYYY-MM-DD)
+  const [dateFilter, setDateFilter] = useState(new Date().toLocaleDateString('en-CA'));
+  
   const [selectedQR, setSelectedQR] = useState<string | null>(null);
   const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'created_at', direction: 'desc' });
   const [activeStatFilter, setActiveStatFilter] = useState<string>('all');

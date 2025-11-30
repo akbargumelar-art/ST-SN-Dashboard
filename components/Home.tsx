@@ -11,7 +11,10 @@ interface HomeProps {
 const Home: React.FC<HomeProps> = ({ data, user }) => {
   const [topupData, setTopupData] = useState<TopupTransaction[]>([]);
   const [adistiData, setAdistiData] = useState<AdistiTransaction[]>([]);
-  const [dateFilter, setDateFilter] = useState('');
+  
+  // DEFAULT DATE: TODAY
+  const [dateFilter, setDateFilter] = useState(new Date().toLocaleDateString('en-CA'));
+  
   const [salesFilter, setSalesFilter] = useState('all');
   const [tapFilter, setTapFilter] = useState('all');
   const [isLoading, setIsLoading] = useState(true);
