@@ -146,8 +146,15 @@ export const bulkAddBucketTransactions = async (newItems: any[]) => {
 // --- ADISTI ---
 
 // Get unique filter options (salesforce and taps)
-export const getAdistiFilters = async (): Promise<{ sales: string[], taps: string[] }> => {
-    const res = await fetch(`${API_URL}/adisti/filters`, { headers: getHeaders() });
+export const getAdistiFilters = async (taps?: string[]): Promise<{ sales: string[], taps: string[] }> => {
+    let url = `${API_URL}/adisti/filters`;
+    if (taps && taps.length > 0) {
+        const query = new URLSearchParams();
+        query.append('tap', taps.join(','));
+        url += `?${query.toString()}`;
+    }
+    
+    const res = await fetch(url, { headers: getHeaders() });
     if (!res.ok) return { sales: [], taps: [] };
     return res.json();
 };
@@ -186,7 +193,30 @@ export const getAdistiTransactions = async (params?: {
     const res = await fetch(url, { headers: getHeaders() });
     if (!res.ok) return { data: [], total: 0, page: 1, totalPages: 1 };
     
-    // Response is now an object { data, total, page, totalPages }
+    // Response is now an object { data, total, page, totalPages, summary }
+    return res.json();
+};
+
+// Get Hierarchical Summary Tree
+export const getAdistiSummaryTree = async (params?: { 
+    search?: string;
+    startDate?: string;
+    endDate?: string;
+    salesforce?: string | string[];
+    tap?: string | string[];
+}): Promise<any[]> => {
+    let url = `${API_URL}/adisti/summary-tree`;
+    if (params) {
+        const query = new URLSearchParams();
+        if (params.search) query.append('search', params.search);
+        if (params.startDate) query.append('startDate', params.startDate);
+        if (params.endDate) query.append('endDate', params.endDate);
+        if (params.salesforce) query.append('salesforce', Array.isArray(params.salesforce) ? params.salesforce.join(',') : params.salesforce);
+        if (params.tap) query.append('tap', Array.isArray(params.tap) ? params.tap.join(',') : params.tap);
+        url += `?${query.toString()}`;
+    }
+    const res = await fetch(url, { headers: getHeaders() });
+    if (!res.ok) return [];
     return res.json();
 };
 

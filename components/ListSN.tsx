@@ -1,6 +1,7 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { AdistiTransaction, User } from '../types';
-import { getAdistiTransactions, getAdistiFilters } from '../services/storage';
+import { getAdistiTransactions, getAdistiFilters, getAdistiSummaryTree } from '../services/storage';
 import { Search, List, Database, Users, MapPin, Package, ChevronLeft, ChevronRight, Loader2, PlayCircle, Filter, ChevronDown, Check } from 'lucide-react';
 
 interface ListSNProps {
@@ -82,9 +83,67 @@ const MultiSelect = ({ label, options, selected, onChange, disabled, placeholder
     );
 };
 
+interface SummaryTreeItemProps {
+  item: any;
+  level: number;
+}
+
+// Recursive Tree Item Component
+const SummaryTreeItem: React.FC<SummaryTreeItemProps> = ({ item, level }) => {
+    const [isExpanded, setIsExpanded] = useState(false);
+    
+    // Level 0 = TAP, Level 1 = Sales, Level 2 = Product
+    const getIcon = () => {
+        if (level === 0) return <MapPin size={16} className="text-orange-500" />;
+        if (level === 1) return <Users size={16} className="text-blue-500" />;
+        return <Package size={16} className="text-emerald-500" />;
+    };
+
+    const isLeaf = !item.children || item.children.length === 0;
+
+    return (
+        <div className="w-full">
+            <div 
+                className={`
+                    flex items-center justify-between p-3 border-b border-slate-100 
+                    ${!isLeaf ? 'cursor-pointer hover:bg-slate-50' : ''}
+                    ${level === 0 ? 'bg-white' : level === 1 ? 'bg-slate-50/50' : 'bg-slate-50'}
+                `}
+                style={{ paddingLeft: `${(level * 20) + 12}px` }}
+                onClick={() => !isLeaf && setIsExpanded(!isExpanded)}
+            >
+                <div className="flex items-center gap-3">
+                    {!isLeaf && (
+                        <ChevronRight size={16} className={`text-slate-400 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+                    )}
+                    {isLeaf && <div className="w-4" />}
+                    
+                    <div className="flex items-center gap-2">
+                        {getIcon()}
+                        <span className={`text-sm ${level === 0 ? 'font-bold text-slate-800' : 'text-slate-700'}`}>
+                            {item.name}
+                        </span>
+                    </div>
+                </div>
+                <div className="flex items-center gap-4">
+                    <span className="text-sm font-bold text-slate-800">{item.total.toLocaleString()} SN</span>
+                </div>
+            </div>
+            {isExpanded && item.children && (
+                <div className="w-full">
+                    {item.children.map((child: any, idx: number) => (
+                        <SummaryTreeItem key={`${child.name}-${idx}`} item={child} level={level + 1} />
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+};
+
 
 const ListSN: React.FC<ListSNProps> = ({ user }) => {
   const [data, setData] = useState<AdistiTransaction[]>([]);
+  const [summaryTree, setSummaryTree] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [hasLoaded, setHasLoaded] = useState(false);
   
@@ -108,14 +167,16 @@ const ListSN: React.FC<ListSNProps> = ({ user }) => {
   const [selectedSales, setSelectedSales] = useState<string[]>([]);
   const [selectedTaps, setSelectedTaps] = useState<string[]>([]);
 
-  // INIT: Load Filter Options (Sales & TAP names)
+  // INIT: Load Filter Options (Initial Load)
   useEffect(() => {
       const loadOptions = async () => {
           try {
-              const res = await getAdistiFilters();
+              let initialTaps: string[] = [];
+              if (user.assigned_tap) initialTaps.push(user.assigned_tap);
+
+              const res = await getAdistiFilters(initialTaps);
               setFilterOptions(res);
               
-              // If user is assigned, pre-select and lock
               if (user.assigned_salesforce) {
                   setSelectedSales([user.assigned_salesforce]);
               }
@@ -127,11 +188,26 @@ const ListSN: React.FC<ListSNProps> = ({ user }) => {
       loadOptions();
   }, [user]);
 
+  // UPDATE SALESFORCE DROPDOWN WHEN TAP CHANGES (Cascading Filter)
+  useEffect(() => {
+      if (user.assigned_tap) return; 
+
+      const updateSalesDropdown = async () => {
+          try {
+             const res = await getAdistiFilters(selectedTaps);
+             setFilterOptions(prev => ({ ...prev, sales: res.sales }));
+          } catch(e) { console.error(e); }
+      };
+
+      updateSalesDropdown();
+  }, [selectedTaps, user.assigned_tap]);
+
+
   // Main Data Fetcher
   const loadData = async (pageToLoad = 1) => {
         setIsLoading(true);
         try {
-            const res = await getAdistiTransactions({
+            const filterParams = {
                 page: pageToLoad,
                 limit: pagination.limit,
                 search: searchTerm,
@@ -139,276 +215,216 @@ const ListSN: React.FC<ListSNProps> = ({ user }) => {
                 endDate,
                 salesforce: selectedSales,
                 tap: selectedTaps
-            });
+            };
+
+            // Parallel fetch: Data and Summary Tree
+            const [dataRes, treeRes] = await Promise.all([
+                getAdistiTransactions(filterParams),
+                getAdistiSummaryTree(filterParams)
+            ]);
             
-            if (res && res.data && Array.isArray(res.data)) {
-                setData(res.data);
+            // Set Table Data
+            if (dataRes && dataRes.data && Array.isArray(dataRes.data)) {
+                setData(dataRes.data);
                 setPagination(prev => ({
                     ...prev,
-                    total: res.total || 0,
-                    totalPages: res.totalPages || 1,
-                    page: res.page || 1
+                    total: dataRes.total || 0,
+                    totalPages: dataRes.totalPages || 1,
+                    page: dataRes.page || 1
                 }));
-                setHasLoaded(true);
-            } else {
-                setData([]);
-                setPagination(prev => ({ ...prev, total: 0, totalPages: 1 }));
             }
+
+            // Set Tree Data
+            if (Array.isArray(treeRes)) {
+                setSummaryTree(treeRes);
+            } else {
+                setSummaryTree([]);
+            }
+            
+            setHasLoaded(true);
+
         } catch (error) {
-            console.error("Failed to load adisti data", error);
-            setData([]);
+            console.error("Failed to load data", error);
+            alert("Gagal memuat data. Silakan coba lagi.");
         } finally {
             setIsLoading(false);
         }
   };
 
-  // Only load when page changes AND data has already been loaded initially via button
-  useEffect(() => {
-    if (hasLoaded) {
-        loadData(pagination.page);
-    }
-  }, [pagination.page]);
-
-  // Handler for "Tampilkan" Button
-  const handleShowData = () => {
-      setPagination(prev => ({ ...prev, page: 1 }));
-      loadData(1);
-  };
-
-  const handleNextPage = () => {
-      if (pagination.page < pagination.totalPages) {
-          setPagination(prev => ({ ...prev, page: prev.page + 1 }));
-      }
-  };
-
-  const handlePrevPage = () => {
-      if (pagination.page > 1) {
-          setPagination(prev => ({ ...prev, page: prev.page - 1 }));
-      }
-  };
-  
   return (
-    <div className="flex flex-col h-full overflow-hidden animate-fade-in space-y-4">
-      
-      {/* Header Section */}
-      <div className="flex flex-col md:flex-row justify-between items-end gap-4 border-b border-slate-200 pb-2 flex-shrink-0">
+    <div className="space-y-6 animate-fade-in h-full flex flex-col">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-slate-200 pb-4 flex-shrink-0">
         <div>
           <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-            <List className="text-purple-600" />
+            <Database className="text-purple-600" />
             List SN (Adisti)
           </h2>
-          <p className="text-slate-500 text-sm mt-1">Filter & Tampilkan Data Distribusi</p>
+          <p className="text-slate-500">Database Master Distribusi</p>
         </div>
       </div>
 
-      {/* Filters Area - TOP PRIORITY */}
-      <div className="bg-white p-4 rounded-xl shadow-md border border-purple-100 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-12 gap-4 flex-shrink-0 items-end">
-         
-         <div className="lg:col-span-12 mb-2 flex items-center gap-2 text-purple-800 border-b border-purple-50 pb-2">
-            <Filter size={18} />
-            <span className="font-bold text-sm">FILTER DATA</span>
-         </div>
-
-         {/* Date Range */}
-         <div className="lg:col-span-4 flex gap-2">
-            <div className="w-1/2">
-                <span className="text-[10px] font-bold text-slate-500 uppercase mb-1 block">Dari Tanggal</span>
-                <input 
-                    type="date" 
-                    className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 focus:ring-2 focus:ring-purple-500 outline-none" 
-                    value={startDate} 
-                    onChange={(e) => setStartDate(e.target.value)} 
-                />
+      {/* FILTERS */}
+      <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4 flex-shrink-0">
+          <div className="lg:col-span-2">
+            <span className="text-[10px] font-bold text-slate-500 uppercase mb-1 block">Cari SN / Produk</span>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+              <input 
+                type="text" 
+                placeholder="Ketik disini..." 
+                className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                value={searchTerm}
+                onChange={e => setSearchTerm(e.target.value)}
+              />
             </div>
-            <div className="w-1/2">
-                <span className="text-[10px] font-bold text-slate-500 uppercase mb-1 block">Sampai</span>
-                <input 
-                    type="date" 
-                    className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 focus:ring-2 focus:ring-purple-500 outline-none" 
-                    value={endDate} 
-                    onChange={(e) => setEndDate(e.target.value)} 
-                />
-            </div>
-         </div>
+          </div>
+          
+          <div>
+            <span className="text-[10px] font-bold text-slate-500 uppercase mb-1 block">Dari Tanggal</span>
+            <input 
+                type="date" 
+                className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                value={startDate}
+                onChange={e => setStartDate(e.target.value)}
+            />
+          </div>
+          <div>
+            <span className="text-[10px] font-bold text-slate-500 uppercase mb-1 block">Sampai</span>
+            <input 
+                type="date" 
+                className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                value={endDate}
+                onChange={e => setEndDate(e.target.value)}
+            />
+          </div>
 
-         {/* Sales Filter (Multi Select) */}
-         <div className="lg:col-span-3">
+          <div>
              <MultiSelect 
-                label="Salesforce"
-                placeholder="Semua Sales"
-                options={filterOptions.sales}
-                selected={selectedSales}
-                onChange={setSelectedSales}
-                disabled={!!user.assigned_salesforce}
-             />
-         </div>
-
-         {/* TAP Filter (Multi Select) */}
-         <div className="lg:col-span-3">
-             <MultiSelect 
-                label="TAP Area"
+                label="TAP AREA" 
                 placeholder="Semua TAP"
-                options={filterOptions.taps}
-                selected={selectedTaps}
+                options={filterOptions.taps} 
+                selected={selectedTaps} 
                 onChange={setSelectedTaps}
                 disabled={!!user.assigned_tap}
              />
-         </div>
-
-         <div className="lg:col-span-2">
-            <button 
-                onClick={handleShowData}
-                disabled={isLoading}
-                className="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-2.5 rounded-lg shadow-md flex items-center justify-center space-x-2 transition-all disabled:opacity-50"
-            >
-                {isLoading ? <Loader2 className="animate-spin" size={18} /> : <PlayCircle size={18} />}
-                <span>Tampilkan</span>
-            </button>
-         </div>
-         
-         {/* Search Bar Secondary */}
-         {hasLoaded && (
-            <div className="lg:col-span-12 mt-2 pt-2 border-t border-slate-100">
-                <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-                    <input 
-                        type="text" 
-                        placeholder="Cari SN / Produk / Outlet spesifik dalam hasil..." 
-                        className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-purple-500 outline-none transition-all" 
-                        value={searchTerm} 
-                        onChange={(e) => setSearchTerm(e.target.value)} 
-                    />
-                </div>
-            </div>
-         )}
+          </div>
+          <div>
+             <MultiSelect 
+                label="SALESFORCE" 
+                placeholder="Semua Sales"
+                options={filterOptions.sales} 
+                selected={selectedSales} 
+                onChange={setSelectedSales}
+                disabled={!!user.assigned_salesforce}
+             />
+          </div>
       </div>
 
-      {/* Summary Cards (Only Show After Load) */}
-      {hasLoaded && (
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-3 flex-shrink-0 animate-fade-in">
-            <div className="bg-white p-3 rounded-xl shadow-sm border border-slate-200 flex items-center space-x-3">
-                <div className="p-2 bg-purple-100 text-purple-600 rounded-lg"><Database size={18} /></div>
-                <div>
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Total Hasil</p>
-                    <p className="text-lg font-bold text-slate-800 leading-none mt-1">{pagination.total.toLocaleString()}</p>
-                </div>
-            </div>
-            <div className="bg-white p-3 rounded-xl shadow-sm border border-slate-200 flex items-center space-x-3">
-                <div className="p-2 bg-blue-100 text-blue-600 rounded-lg"><Users size={18} /></div>
-                <div>
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Salesforce</p>
-                    <p className="text-sm font-bold text-slate-800 leading-none mt-1 truncate max-w-[100px]">
-                        {selectedSales.length > 0 ? (selectedSales.length === 1 ? selectedSales[0] : `${selectedSales.length} Selected`) : 'All'}
-                    </p>
-                </div>
-            </div>
-            <div className="bg-white p-3 rounded-xl shadow-sm border border-slate-200 flex items-center space-x-3">
-                <div className="p-2 bg-orange-100 text-orange-600 rounded-lg"><MapPin size={18} /></div>
-                <div>
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">TAP Area</p>
-                    <p className="text-sm font-bold text-slate-800 leading-none mt-1 truncate max-w-[100px]">
-                        {selectedTaps.length > 0 ? (selectedTaps.length === 1 ? selectedTaps[0] : `${selectedTaps.length} Selected`) : 'All'}
-                    </p>
-                </div>
-            </div>
-            <div className="bg-white p-3 rounded-xl shadow-sm border border-slate-200 flex items-center space-x-3">
-                <div className="p-2 bg-emerald-100 text-emerald-600 rounded-lg"><Package size={18} /></div>
-                <div>
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Status</p>
-                    <p className="text-lg font-bold text-slate-800 leading-none mt-1">Loaded</p>
-                </div>
-            </div>
-        </div>
-      )}
+      <div className="flex justify-end flex-shrink-0">
+         <button 
+            onClick={() => loadData(1)}
+            disabled={isLoading}
+            className="flex items-center space-x-2 bg-purple-600 hover:bg-purple-700 text-white px-6 py-2 rounded-lg shadow-md transition-all disabled:opacity-50"
+         >
+            {isLoading ? <Loader2 className="animate-spin" size={18}/> : <PlayCircle size={18}/>}
+            <span className="font-bold">Tampilkan Data</span>
+         </button>
+      </div>
 
-      {/* Table Container - STACK & SCROLL */}
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 flex-1 flex flex-col min-h-0 relative overflow-hidden">
-        
-        {/* Empty State / Initial State */}
-        {!hasLoaded && !isLoading && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-400 bg-slate-50/50 z-10">
-                <Filter size={48} className="mb-4 text-slate-300" />
-                <p className="text-lg font-medium text-slate-500">Silakan Filter Data Terlebih Dahulu</p>
-                <p className="text-sm">Pilih rentang tanggal dan kriteria lain, lalu klik "Tampilkan"</p>
-            </div>
-        )}
+      {/* CONTENT AREA */}
+      {!hasLoaded ? (
+          <div className="flex-1 flex flex-col items-center justify-center text-slate-400 min-h-[300px] border-2 border-dashed border-slate-200 rounded-xl bg-slate-50/50">
+             <Filter size={48} className="mb-4 text-slate-300" />
+             <p className="font-medium">Silakan atur filter dan klik "Tampilkan Data"</p>
+          </div>
+      ) : (
+          <div className="flex flex-col gap-6 flex-1 min-h-0">
+             
+             {/* SUMMARY TABLE (COLLAPSIBLE) */}
+             <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex-shrink-0 flex flex-col max-h-[40vh]">
+                 <div className="bg-purple-50 px-4 py-3 border-b border-purple-100 flex justify-between items-center">
+                    <h3 className="text-sm font-bold text-purple-800 flex items-center gap-2">
+                        <List size={16}/> Summary Grouping
+                    </h3>
+                    <span className="text-xs text-purple-600 bg-white px-2 py-0.5 rounded-full border border-purple-100">
+                        {summaryTree.length} TAP Area
+                    </span>
+                 </div>
+                 <div className="overflow-y-auto flex-1">
+                    {summaryTree.length === 0 ? (
+                        <div className="p-4 text-center text-sm text-slate-500">Tidak ada data summary.</div>
+                    ) : (
+                        summaryTree.map((tapNode, idx) => (
+                            <SummaryTreeItem key={`${tapNode.name}-${idx}`} item={tapNode} level={0} />
+                        ))
+                    )}
+                 </div>
+             </div>
 
-        {/* Loading Overlay */}
-        {isLoading && (
-            <div className="absolute inset-0 bg-white/60 z-30 flex items-center justify-center backdrop-blur-[1px]">
-                <Loader2 className="animate-spin text-purple-600" size={32} />
-            </div>
-        )}
+             {/* MAIN DATA TABLE */}
+             <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex-1 flex flex-col min-h-0">
+                <div className="px-4 py-3 border-b border-slate-200 flex justify-between items-center bg-slate-50 sticky top-0 z-30">
+                    <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-slate-500">Total Records:</span>
+                        <span className="text-sm font-bold text-slate-800">{pagination.total.toLocaleString()}</span>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                        <button 
+                            disabled={pagination.page === 1 || isLoading}
+                            onClick={() => loadData(pagination.page - 1)}
+                            className="p-1 rounded-md hover:bg-white disabled:opacity-30 transition-colors border border-transparent hover:border-slate-200"
+                        >
+                            <ChevronLeft size={18} />
+                        </button>
+                        <span className="text-xs font-medium text-slate-600">
+                            Page {pagination.page} of {pagination.totalPages}
+                        </span>
+                        <button 
+                            disabled={pagination.page >= pagination.totalPages || isLoading}
+                            onClick={() => loadData(pagination.page + 1)}
+                            className="p-1 rounded-md hover:bg-white disabled:opacity-30 transition-colors border border-transparent hover:border-slate-200"
+                        >
+                            <ChevronRight size={18} />
+                        </button>
+                    </div>
+                </div>
 
-        {hasLoaded && (
-            <>
-                <div className="flex-1 overflow-y-auto w-full scrollbar-thin">
-                <table className="w-full text-left border-collapse min-w-[1000px]">
-                    <thead className="bg-slate-50 sticky top-0 z-20 shadow-sm">
-                    <tr>
-                        <th className="px-4 py-3 font-bold text-slate-900 text-xs uppercase sticky top-0 bg-slate-50">Tanggal</th>
-                        <th className="px-4 py-3 font-bold text-slate-900 text-xs uppercase sticky top-0 bg-slate-50">NoTr (SN)</th>
-                        <th className="px-4 py-3 font-bold text-slate-900 text-xs uppercase sticky top-0 bg-slate-50">Product</th>
-                        <th className="px-4 py-3 font-bold text-slate-900 text-xs uppercase sticky top-0 bg-slate-50">Salesforce</th>
-                        <th className="px-4 py-3 font-bold text-slate-900 text-xs uppercase sticky top-0 bg-slate-50">TAP</th>
-                        <th className="px-4 py-3 font-bold text-slate-900 text-xs uppercase sticky top-0 bg-slate-50">No RS</th>
-                        <th className="px-4 py-3 font-bold text-slate-900 text-xs uppercase sticky top-0 bg-slate-50">ID Digipos</th>
-                        <th className="px-4 py-3 font-bold text-slate-900 text-xs uppercase sticky top-0 bg-slate-50">Outlet</th>
-                    </tr>
+                <div className="overflow-y-auto flex-1">
+                  <table className="w-full text-left border-collapse">
+                    <thead className="bg-slate-50 border-b border-slate-200 sticky top-0 z-20">
+                      <tr>
+                        <th className="px-4 py-3 font-bold text-slate-900 text-xs uppercase tracking-wider">Tanggal</th>
+                        <th className="px-4 py-3 font-bold text-slate-900 text-xs uppercase tracking-wider">No TR (SN)</th>
+                        <th className="px-4 py-3 font-bold text-slate-900 text-xs uppercase tracking-wider">Product</th>
+                        <th className="px-4 py-3 font-bold text-slate-900 text-xs uppercase tracking-wider">Salesforce</th>
+                        <th className="px-4 py-3 font-bold text-slate-900 text-xs uppercase tracking-wider">TAP</th>
+                        <th className="px-4 py-3 font-bold text-slate-900 text-xs uppercase tracking-wider">No RS</th>
+                        <th className="px-4 py-3 font-bold text-slate-900 text-xs uppercase tracking-wider">ID Digipos</th>
+                        <th className="px-4 py-3 font-bold text-slate-900 text-xs uppercase tracking-wider">Outlet</th>
+                      </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                    {data.map((item) => (
-                        <tr key={item.id} className="hover:bg-purple-50/50 transition-colors text-xs md:text-sm group">
-                        <td className="px-4 py-3 text-slate-600 whitespace-nowrap">{item.created_at}</td>
-                        <td className="px-4 py-3 font-mono font-bold text-slate-800 bg-slate-50/50">{item.sn_number}</td>
-                        <td className="px-4 py-3 text-slate-700 truncate max-w-[200px]" title={item.product_name}>{item.product_name}</td>
-                        <td className="px-4 py-3 text-slate-600 font-medium">{item.salesforce_name}</td>
-                        <td className="px-4 py-3 text-slate-600">{item.tap}</td>
-                        <td className="px-4 py-3 font-mono text-slate-500">{item.no_rs || '-'}</td>
-                        <td className="px-4 py-3 font-mono text-slate-500">{item.id_digipos || '-'}</td>
-                        <td className="px-4 py-3 text-slate-500 truncate max-w-[180px]" title={item.nama_outlet}>{item.nama_outlet || '-'}</td>
+                      {data.map((item) => (
+                        <tr key={item.id} className="hover:bg-purple-50/30 transition-colors">
+                          <td className="px-4 py-3 text-sm text-slate-600 whitespace-nowrap">{item.created_at}</td>
+                          <td className="px-4 py-3 font-mono text-sm font-bold text-slate-800">{item.sn_number}</td>
+                          <td className="px-4 py-3 text-sm text-slate-700">{item.product_name}</td>
+                          <td className="px-4 py-3 text-sm text-slate-600">{item.salesforce_name}</td>
+                          <td className="px-4 py-3 text-sm text-slate-600">{item.tap}</td>
+                          <td className="px-4 py-3 text-sm font-mono text-slate-500">{item.no_rs}</td>
+                          <td className="px-4 py-3 text-sm font-mono text-slate-500">{item.id_digipos}</td>
+                          <td className="px-4 py-3 text-sm text-slate-600">{item.nama_outlet}</td>
                         </tr>
-                    ))}
-                    {!isLoading && data.length === 0 && (
-                        <tr>
-                            <td colSpan={8} className="px-6 py-20 text-center text-slate-400">
-                                <div className="flex flex-col items-center justify-center space-y-3">
-                                    <p className="font-medium">Tidak ada data ditemukan untuk filter ini.</p>
-                                </div>
-                            </td>
-                        </tr>
-                    )}
+                      ))}
+                      {data.length === 0 && (
+                          <tr><td colSpan={8} className="p-8 text-center text-slate-400 text-sm">Tidak ada data ditemukan.</td></tr>
+                      )}
                     </tbody>
-                </table>
+                  </table>
                 </div>
-                
-                {/* Footer Pagination Controls */}
-                <div className="bg-white border-t border-slate-200 px-4 py-3 flex justify-between items-center flex-shrink-0 z-20 shadow-[0_-2px_10px_rgba(0,0,0,0.05)]">
-                    <button 
-                        onClick={handlePrevPage}
-                        disabled={pagination.page <= 1 || isLoading}
-                        className="flex items-center space-x-1 px-3 py-1.5 rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium"
-                    >
-                        <ChevronLeft size={16} />
-                        <span>Previous</span>
-                    </button>
-
-                    <div className="flex items-center gap-2 text-sm text-slate-600">
-                         <span>Page <strong>{pagination.page}</strong> of <strong>{pagination.totalPages}</strong></span>
-                    </div>
-
-                    <button 
-                        onClick={handleNextPage}
-                        disabled={pagination.page >= pagination.totalPages || isLoading}
-                        className="flex items-center space-x-1 px-3 py-1.5 rounded-lg bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-bold shadow-md"
-                    >
-                        <span>Next</span>
-                        <ChevronRight size={16} />
-                    </button>
-                </div>
-            </>
-        )}
-      </div>
+             </div>
+          </div>
+      )}
     </div>
   );
 };

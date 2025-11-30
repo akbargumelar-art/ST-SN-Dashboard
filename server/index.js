@@ -1,3 +1,4 @@
+
 const express = require('express');
 const cors = require('cors');
 const db = require('./config/db');
@@ -297,13 +298,134 @@ app.post('/api/bucket/bulk', async (req, res) => {
 // 6. ADISTI (SERVER SIDE PAGINATION WITH MULTI-SELECT & ROBUST DATE)
 app.get('/api/adisti/filters', async (req, res) => {
     try {
-        const [sales] = await db.query('SELECT DISTINCT salesforce_name FROM adisti_transactions WHERE salesforce_name IS NOT NULL AND salesforce_name != "" ORDER BY salesforce_name ASC');
+        const tapsParam = req.query.tap; // Can be comma separated or array
+        
+        let salesQuery = 'SELECT DISTINCT salesforce_name FROM adisti_transactions WHERE salesforce_name IS NOT NULL AND salesforce_name != ""';
+        const salesParams = [];
+
+        // If TAPs are selected, filter Salesforce dropdown to only show Sales in those TAPs
+        if (tapsParam) {
+            const tapArray = Array.isArray(tapsParam) ? tapsParam : tapsParam.split(',').filter(Boolean);
+            if (tapArray.length > 0) {
+                salesQuery += ' AND tap IN (?)';
+                salesParams.push(tapArray);
+            }
+        }
+        
+        salesQuery += ' ORDER BY salesforce_name ASC';
+
+        const [sales] = await db.query(salesQuery, salesParams);
+        
+        // Taps always show all options
         const [taps] = await db.query('SELECT DISTINCT tap FROM adisti_transactions WHERE tap IS NOT NULL AND tap != "" ORDER BY tap ASC');
+        
         res.json({ 
             sales: sales.map(s => s.salesforce_name),
             taps: taps.map(t => t.tap)
         });
     } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// NEW ENDPOINT: Summary Tree (Hierarchy)
+app.get('/api/adisti/summary-tree', async (req, res) => {
+    try {
+        const startDate = req.query.startDate || '';
+        const endDate = req.query.endDate || '';
+        const search = req.query.search || '';
+        const salesforce = req.query.salesforce || '';
+        const tap = req.query.tap || '';
+
+        let whereClause = 'WHERE 1=1';
+        const params = [];
+
+        if (search) {
+             whereClause += ` AND (sn_number LIKE ? OR product_name LIKE ? OR nama_outlet LIKE ?)`;
+             params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+        }
+        
+        // Multi Select Logic for Tree
+        if (salesforce && salesforce !== 'all') {
+             const sfArray = salesforce.split(',').map(s => s.trim());
+             if (sfArray.length > 0) {
+                 whereClause += ` AND salesforce_name IN (?)`;
+                 params.push(sfArray);
+             }
+        }
+        if (tap && tap !== 'all') {
+             const tapArray = tap.split(',').map(t => t.trim());
+             if (tapArray.length > 0) {
+                 whereClause += ` AND tap IN (?)`;
+                 params.push(tapArray);
+             }
+        }
+
+        if (startDate) {
+             whereClause += ` AND (
+                (created_at REGEXP '^[0-9]{4}-[0-9]{2}-[0-9]{2}' AND created_at >= ?) OR 
+                (created_at REGEXP '^[0-9]{2}/[0-9]{2}/[0-9]{4}' AND STR_TO_DATE(created_at, '%d/%m/%Y') >= ?)
+            )`;
+            params.push(startDate, startDate);
+        }
+        if (endDate) {
+             whereClause += ` AND (
+                (created_at REGEXP '^[0-9]{4}-[0-9]{2}-[0-9]{2}' AND created_at <= ?) OR 
+                (created_at REGEXP '^[0-9]{2}/[0-9]{2}/[0-9]{4}' AND STR_TO_DATE(created_at, '%d/%m/%Y') <= ?)
+            )`;
+            params.push(endDate, endDate);
+        }
+
+        // Aggregate by TAP -> Salesforce -> Product
+        const query = `
+            SELECT 
+                COALESCE(tap, 'Unknown') as tap, 
+                COALESCE(salesforce_name, 'Unknown') as salesforce, 
+                COALESCE(product_name, 'Unknown') as product, 
+                COUNT(*) as count 
+            FROM adisti_transactions 
+            ${whereClause} 
+            GROUP BY tap, salesforce_name, product_name 
+            ORDER BY tap, salesforce_name, count DESC
+        `;
+        
+        const [rows] = await db.query(query, params);
+
+        // Transform flat rows into Tree structure
+        const tree = {};
+        
+        rows.forEach(row => {
+            if (!tree[row.tap]) {
+                tree[row.tap] = { name: row.tap, total: 0, salesforces: {} };
+            }
+            tree[row.tap].total += row.count;
+
+            if (!tree[row.tap].salesforces[row.salesforce]) {
+                tree[row.tap].salesforces[row.salesforce] = { name: row.salesforce, total: 0, products: [] };
+            }
+            tree[row.tap].salesforces[row.salesforce].total += row.count;
+            
+            tree[row.tap].salesforces[row.salesforce].products.push({
+                name: row.product,
+                count: row.count
+            });
+        });
+
+        // Convert Objects to Sorted Arrays for Frontend
+        const result = Object.values(tree).map((t) => ({
+            name: t.name,
+            total: t.total,
+            children: Object.values(t.salesforces).map((s) => ({
+                name: s.name,
+                total: s.total,
+                children: s.products
+            })).sort((a, b) => b.total - a.total)
+        })).sort((a, b) => b.total - a.total);
+
+        res.json(result);
+
+    } catch (err) {
+        console.error("Summary Tree Error:", err);
         res.status(500).json({ error: err.message });
     }
 });
@@ -349,7 +471,6 @@ app.get('/api/adisti', async (req, res) => {
     }
 
     // ROBUST DATE LOGIC
-    // We check both direct string comparison AND str_to_date for DD/MM/YYYY format
     if (startDate) {
         whereClause += ` AND (
             (created_at REGEXP '^[0-9]{4}-[0-9]{2}-[0-9]{2}' AND created_at >= ?) OR 
@@ -368,6 +489,9 @@ app.get('/api/adisti', async (req, res) => {
 
     const [countResult] = await db.query(`SELECT COUNT(*) as total FROM adisti_transactions ${whereClause}`, params);
     const total = countResult[0].total;
+    
+    // For main table, we just return the rows. Summary is now handled by /summary-tree
+    const summary = {}; 
 
     const queryParams = [...params, limit, offset];
     const [rows] = await db.query(`SELECT * FROM adisti_transactions ${whereClause} ORDER BY id DESC LIMIT ? OFFSET ?`, queryParams);
@@ -376,7 +500,8 @@ app.get('/api/adisti', async (req, res) => {
         data: rows,
         total: total,
         page: page,
-        totalPages: Math.ceil(total / limit)
+        totalPages: Math.ceil(total / limit),
+        summary: summary
     });
 
   } catch (err) {
