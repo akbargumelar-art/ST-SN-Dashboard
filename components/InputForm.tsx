@@ -310,10 +310,10 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess, setIsGlobalProcessing 
                 senderIdx = findIdx(['sender', 'pengirim']);
                 receiverIdx = findIdx(['receiver', 'penerima']);
                 trxTypeIdx = findIdx(['transactiontype', 'type', 'tipe']);
-                amountIdx = findIdx(['amount', 'jumlah']);
+                amountIdx = findIdx(['amount', 'jumlah', 'nominal']);
                 currencyIdx = findIdx(['currency']);
                 remarksIdx = findIdx(['remarks', 'ket']);
-                sfIdx = findIdx(['salesforce']);
+                sfIdx = findIdx(['salesforce', 'sf']);
                 tapIdx = findIdx(['tap']);
                 digiIdx = findIdx(['iddigipos', 'digipos']);
                 outletIdx = findIdx(['namaoutlet', 'outlet']);
@@ -398,11 +398,22 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess, setIsGlobalProcessing 
                         });
                      }
                 } else if (uploadMode === 'topup') {
-                     // Topup - No Trx ID
+                     // Topup - Special Handling for Date and Amount
+                     const dateRaw = getVal(parts, dateIdx) || getVal(parts, 0);
+                     
+                     // Check format DD/MM/YYYY to allow correct parsing
+                     let finalDate = dateRaw;
+                     if (dateRaw.match(/^\d{2}\/\d{2}\/\d{4}/)) {
+                         // Handle DD/MM/YYYY -> YYYY-MM-DD
+                         const [d, m, y] = dateRaw.split(' ')[0].split('/');
+                         finalDate = `${y}-${m}-${d}`;
+                     }
+
                      const amtStr = getVal(parts, amountIdx).replace(/[^0-9]/g, '');
+                     
                      if (amtStr) {
                         tempItems.push({
-                            transaction_date: getVal(parts, dateIdx) || getVal(parts, 0),
+                            transaction_date: finalDate,
                             sender: getVal(parts, senderIdx),
                             receiver: getVal(parts, receiverIdx),
                             transaction_type: getVal(parts, trxTypeIdx),

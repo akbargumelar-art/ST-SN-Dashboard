@@ -6,6 +6,7 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto'); // Added for UUID generation
 
 const app = express();
 app.use(cors());
@@ -25,6 +26,28 @@ const authenticateToken = (req, res, next) => {
         req.user = user;
         next();
     });
+};
+
+// Helper Date Formatter
+const formatDateToMySQL = (dateStr) => {
+    if (!dateStr) return null;
+    // Check if DD/MM/YYYY
+    if (dateStr.includes('/')) {
+        const parts = dateStr.split('/');
+        if (parts.length === 3) {
+            // Assuming DD/MM/YYYY
+            return `${parts[2]}-${parts[1]}-${parts[0]}`;
+        }
+    }
+    // Check if already YYYY-MM-DD
+    if (dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) return dateStr;
+    
+    // Try standard Date parse
+    try {
+        return new Date(dateStr).toISOString().split('T')[0];
+    } catch (e) {
+        return null;
+    }
 };
 
 // --- AUTH ---
@@ -213,7 +236,7 @@ app.post('/api/sellthru/bulk', authenticateToken, async (req, res) => {
 
             insertValues.push([
                 item.sn_number,
-                item.sellthru_date || new Date().toISOString().split('T')[0],
+                formatDateToMySQL(item.sellthru_date) || new Date().toISOString().split('T')[0],
                 item.id_digipos || '-',
                 item.nama_outlet || '-',
                 item.price || 0,
@@ -710,16 +733,34 @@ app.get('/api/topup/summary', authenticateToken, async (req, res) => {
 app.post('/api/topup/bulk', authenticateToken, async (req, res) => {
     const items = req.body;
     try {
-        // REMOVED transaction_id from INSERT query
+        // 1. Ensure Unique Transaction ID for each row to prevent DB Duplicate Error
+        // 2. Format Date DD/MM/YYYY to YYYY-MM-DD
         const query = `
             INSERT INTO topup_transactions 
-            (transaction_date, sender, receiver, transaction_type, amount, currency, remarks, salesforce, tap, id_digipos, nama_outlet) 
+            (transaction_id, transaction_date, sender, receiver, transaction_type, amount, currency, remarks, salesforce, tap, id_digipos, nama_outlet) 
             VALUES ?
+            ON DUPLICATE KEY UPDATE
+            amount=VALUES(amount), remarks=VALUES(remarks)
         `;
-        const values = items.map(i => [i.transaction_date, i.sender, i.receiver, i.transaction_type, i.amount, i.currency, i.remarks, i.salesforce, i.tap, i.id_digipos, i.nama_outlet]);
+        
+        const values = items.map(i => {
+             // Generate Random Unique ID if none exists (to allow duplicate data rows)
+             const uniqueId = crypto.randomUUID(); 
+             const fmtDate = formatDateToMySQL(i.transaction_date) || i.transaction_date;
+
+             return [
+                uniqueId, 
+                fmtDate, 
+                i.sender, i.receiver, i.transaction_type, i.amount, i.currency, i.remarks, i.salesforce, i.tap, i.id_digipos, i.nama_outlet
+             ];
+        });
+
         await db.query(query, [values]);
         res.json({ message: 'Topup uploaded' });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) { 
+        console.error(err);
+        res.status(500).json({ error: err.message }); 
+    }
 });
 
 app.get('/api/bucket', authenticateToken, async (req, res) => {
@@ -742,7 +783,7 @@ app.post('/api/bucket/bulk', authenticateToken, async (req, res) => {
             remarks=VALUES(remarks), salesforce=VALUES(salesforce), tap=VALUES(tap), 
             id_digipos=VALUES(id_digipos), nama_outlet=VALUES(nama_outlet)
         `;
-        const values = items.map(i => [i.transaction_id, i.transaction_date, i.sender, i.receiver, i.transaction_type, i.amount, i.currency, i.remarks, i.salesforce, i.tap, i.id_digipos, i.nama_outlet]);
+        const values = items.map(i => [i.transaction_id, formatDateToMySQL(i.transaction_date) || i.transaction_date, i.sender, i.receiver, i.transaction_type, i.amount, i.currency, i.remarks, i.salesforce, i.tap, i.id_digipos, i.nama_outlet]);
         await db.query(query, [values]);
         res.json({ message: 'Bucket uploaded' });
     } catch (err) { res.status(500).json({ error: err.message }); }
