@@ -159,7 +159,7 @@ const ListSN: React.FC<ListSNProps> = ({ user }) => {
   // Options for Dropdowns
   const [filterOptions, setFilterOptions] = useState<{sales: string[], taps: string[]}>({ sales: [], taps: [] });
 
-  // Pagination State
+  // Pagination State - DEFAULT 50
   const [pagination, setPagination] = useState({
       page: 1,
       limit: 50,
