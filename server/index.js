@@ -1,3 +1,4 @@
+
 const express = require('express');
 const cors = require('cors');
 const db = require('./config/db');
@@ -517,7 +518,7 @@ app.get('/api/sellthru/export', async (req, res) => {
     }
 });
 
-// --- DASHBOARD SUMMARY (NEW) ---
+// --- DASHBOARD SUMMARY (NEW & COMPLEX LOGIC) ---
 app.get('/api/dashboard/summary', authenticateToken, async (req, res) => {
     try {
         const startDate = req.query.startDate || '';
@@ -525,7 +526,7 @@ app.get('/api/dashboard/summary', authenticateToken, async (req, res) => {
         const salesforce = req.query.salesforce || '';
         const tap = req.query.tap || '';
 
-        // 1. Calculate Total Topup
+        // 1. Calculate Total Topup (Based on Date and SF Filters)
         let topupQuery = `SELECT SUM(amount) as total FROM topup_transactions WHERE 1=1`;
         let topupParams = [];
         
@@ -537,22 +538,32 @@ app.get('/api/dashboard/summary', authenticateToken, async (req, res) => {
         const [topupRes] = await db.query(topupQuery, topupParams);
         const totalTopup = topupRes[0].total || 0;
 
-        // 2. Calculate Sellthru Breakdown (Sales Match vs Securing)
-        // Logic: 
-        // - Join Sellthru with Adisti on SN
-        // - If Adisti exists -> Sales Match (Valid Sales)
-        // - If Adisti NULL -> Securing (Invalid/Unknown Sales)
+        // 2. Complex Logic for Sellthru Analysis
+        // Flow:
+        // - Filter Sellthru Transactions (Date/Sales/Tap)
+        // - MATCH: Check if sellthru.transaction_id EXISTS in bucket_transactions.transaction_id
+        // - IF MATCHED, then Check if sellthru.sn_number EXISTS in adisti_transactions.sn_number
+        // - Categorize as "Sales" (Valid) or "Securing" (Invalid/Unknown SN)
         
         let sellthruQuery = `
             SELECT
-                SUM(CASE WHEN ad.sn_number IS NOT NULL THEN st.price ELSE 0 END) as sales_amount,
-                SUM(CASE WHEN ad.sn_number IS NULL THEN st.price ELSE 0 END) as securing_amount,
-                COUNT(CASE WHEN ad.sn_number IS NOT NULL THEN 1 END) as sales_count,
-                COUNT(CASE WHEN ad.sn_number IS NULL THEN 1 END) as securing_count
+                -- Sum price ONLY if transaction is valid (exists in bucket) AND SN is valid (exists in adisti)
+                SUM(CASE WHEN b.transaction_id IS NOT NULL AND ad.sn_number IS NOT NULL THEN st.price ELSE 0 END) as sales_amount,
+                
+                -- Sum price ONLY if transaction is valid (exists in bucket) BUT SN is invalid (not in adisti)
+                SUM(CASE WHEN b.transaction_id IS NOT NULL AND ad.sn_number IS NULL THEN st.price ELSE 0 END) as securing_amount,
+
+                COUNT(CASE WHEN b.transaction_id IS NOT NULL AND ad.sn_number IS NOT NULL THEN 1 END) as sales_count,
+                COUNT(CASE WHEN b.transaction_id IS NOT NULL AND ad.sn_number IS NULL THEN 1 END) as securing_count
+
             FROM sellthru_transactions st
+            -- Check against Bucket (Transaction Validity)
+            LEFT JOIN bucket_transactions b ON st.transaction_id = b.transaction_id
+            -- Check against Adisti (SN Validity)
             LEFT JOIN adisti_transactions ad ON st.sn_number = ad.sn_number
             WHERE 1=1
         `;
+        
         let sellthruParams = [];
 
         if (startDate) { sellthruQuery += ` AND st.sellthru_date >= ?`; sellthruParams.push(startDate); }
@@ -564,7 +575,7 @@ app.get('/api/dashboard/summary', authenticateToken, async (req, res) => {
         const { sales_amount, securing_amount, sales_count, securing_count } = sellthruRes[0];
 
         // 3. Final Calculation
-        // Tagihan = Topup - Securing (Requested Formula)
+        // Tagihan = Total Topup - Total Securing
         const totalTagihan = totalTopup - (securing_amount || 0);
 
         res.json({
@@ -594,8 +605,8 @@ app.get('/api/topup', authenticateToken, async (req, res) => {
 app.post('/api/topup/bulk', authenticateToken, async (req, res) => {
     const items = req.body;
     try {
-        const query = `INSERT INTO topup_transactions (transaction_date, sender, receiver, transaction_type, amount, currency, remarks, salesforce, tap, id_digipos, nama_outlet) VALUES ?`;
-        const values = items.map(i => [i.transaction_date, i.sender, i.receiver, i.transaction_type, i.amount, i.currency, i.remarks, i.salesforce, i.tap, i.id_digipos, i.nama_outlet]);
+        const query = `INSERT INTO topup_transactions (transaction_id, transaction_date, sender, receiver, transaction_type, amount, currency, remarks, salesforce, tap, id_digipos, nama_outlet) VALUES ?`;
+        const values = items.map(i => [i.transaction_id, i.transaction_date, i.sender, i.receiver, i.transaction_type, i.amount, i.currency, i.remarks, i.salesforce, i.tap, i.id_digipos, i.nama_outlet]);
         await db.query(query, [values]);
         res.json({ message: 'Topup uploaded' });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -611,8 +622,8 @@ app.get('/api/bucket', authenticateToken, async (req, res) => {
 app.post('/api/bucket/bulk', authenticateToken, async (req, res) => {
     const items = req.body;
     try {
-        const query = `INSERT INTO bucket_transactions (transaction_date, sender, receiver, transaction_type, amount, currency, remarks, salesforce, tap, id_digipos, nama_outlet) VALUES ?`;
-        const values = items.map(i => [i.transaction_date, i.sender, i.receiver, i.transaction_type, i.amount, i.currency, i.remarks, i.salesforce, i.tap, i.id_digipos, i.nama_outlet]);
+        const query = `INSERT INTO bucket_transactions (transaction_id, transaction_date, sender, receiver, transaction_type, amount, currency, remarks, salesforce, tap, id_digipos, nama_outlet) VALUES ?`;
+        const values = items.map(i => [i.transaction_id, i.transaction_date, i.sender, i.receiver, i.transaction_type, i.amount, i.currency, i.remarks, i.salesforce, i.tap, i.id_digipos, i.nama_outlet]);
         await db.query(query, [values]);
         res.json({ message: 'Bucket uploaded' });
     } catch (err) { res.status(500).json({ error: err.message }); }

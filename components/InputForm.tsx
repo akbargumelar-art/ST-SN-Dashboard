@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { bulkAddSerialNumbers, bulkAddSellthruTransactions, bulkAddTopupTransactions, bulkAddBucketTransactions, bulkAddAdistiTransactions } from '../services/storage';
 import { UploadCloud, AlertCircle, FileSpreadsheet, Plus, Wallet, List, Receipt, ChevronDown, ChevronUp, CheckCircle2, Loader2, Download, Lock } from 'lucide-react';
@@ -45,12 +46,12 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess, setIsGlobalProcessing 
       example = "123456789012;2025-11-27;DG-10001;Outlet Berkah Jaya;25000;TRX-ABC1234\n987654321098;2025-11-27;DG-10002;Cellular Maju;50000;TRX-XYZ9876";
       filename = "template_db_sellthru.csv";
     } else if (uploadMode === 'topup') {
-      headers = "transaction_date;sender;receiver;transaction_type;amount;currency;remarks;salesforce;tap;id_digipos;nama_outlet";
-      example = "2025-11-26 14:59:46;6282114115293;82118776787;Debit;210000;IDR;Top Up balance via SF;Ahmad Gunawan;Pemuda;2100005480;MAJU JAYA";
+      headers = "transaction_id;transaction_date;sender;receiver;transaction_type;amount;currency;remarks;salesforce;tap;id_digipos;nama_outlet";
+      example = "TRX-TOPUP-001;2025-11-26 14:59:46;6282114115293;82118776787;Debit;210000;IDR;Top Up balance via SF;Ahmad Gunawan;Pemuda;2100005480;MAJU JAYA";
       filename = "template_db_topup_saldo.csv";
     } else if (uploadMode === 'bucket') {
-      headers = "transaction_date;sender;receiver;transaction_type;amount;currency;remarks;salesforce;tap;id_digipos;nama_outlet";
-      example = "2025-11-26 14:59:46;6282114115293;82118776787;Debit;210000;IDR;Top Up balance via SF;Ahmad Gunawan;Pemuda;2100005480;MAJU JAYA";
+      headers = "transaction_id;transaction_date;sender;receiver;transaction_type;amount;currency;remarks;salesforce;tap;id_digipos;nama_outlet";
+      example = "TRX-BUCKET-001;2025-11-26 14:59:46;6282114115293;82118776787;Debit;210000;IDR;Top Up balance via SF;Ahmad Gunawan;Pemuda;2100005480;MAJU JAYA";
       filename = "template_db_bucket_transaksi.csv";
     } else {
       headers = "created_at;sn_number;warehouse;product_name;salesforce_name;no_rs;id_digipos;nama_outlet;tap";
@@ -280,6 +281,8 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess, setIsGlobalProcessing 
                 if (snIdx === -1) { snIdx=0; dateIdx=1; digiIdx=2; outletIdx=3; amountIdx=4; trxIdIdx=5; }
             }
             else { 
+                // Topup & Bucket
+                trxIdIdx = findIdx(['transactionid', 'trxid', 'id']);
                 dateIdx = findIdx(['transactiondate', 'tanggal', 'date']);
                 senderIdx = findIdx(['sender', 'pengirim']);
                 receiverIdx = findIdx(['receiver', 'penerima']);
@@ -292,7 +295,11 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess, setIsGlobalProcessing 
                 digiIdx = findIdx(['iddigipos', 'digipos']);
                 outletIdx = findIdx(['namaoutlet', 'outlet']);
                 
-                if (amountIdx === -1) { amountIdx = 4; dateIdx=0; } 
+                // Fallback default index if headers not found for topup/bucket
+                if (amountIdx === -1) { 
+                    trxIdIdx = 0; dateIdx=1; senderIdx=2; receiverIdx=3; trxTypeIdx=4; amountIdx=5;
+                    currencyIdx=6; remarksIdx=7; sfIdx=8; tapIdx=9; digiIdx=10; outletIdx=11;
+                } 
             }
 
             const tempItems: any[] = [];
@@ -348,20 +355,22 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess, setIsGlobalProcessing 
                     }
                 }
                 else { 
+                     // Topup & Bucket
                      const amtStr = getVal(parts, amountIdx).replace(/[^0-9]/g, '');
                      if (amtStr) {
                         tempItems.push({
+                            transaction_id: getVal(parts, trxIdIdx),
                             transaction_date: getVal(parts, dateIdx) || getVal(parts, 0),
-                            sender: getVal(parts, senderIdx) || getVal(parts, 1),
-                            receiver: getVal(parts, receiverIdx) || getVal(parts, 2),
-                            transaction_type: getVal(parts, trxTypeIdx) || getVal(parts, 3),
+                            sender: getVal(parts, senderIdx),
+                            receiver: getVal(parts, receiverIdx),
+                            transaction_type: getVal(parts, trxTypeIdx),
                             amount: amtStr ? parseInt(amtStr) : 0,
                             currency: getVal(parts, currencyIdx) || 'IDR',
-                            remarks: getVal(parts, remarksIdx) || getVal(parts, 6),
-                            salesforce: getVal(parts, sfIdx) || getVal(parts, 7),
-                            tap: getVal(parts, tapIdx) || getVal(parts, 8),
-                            id_digipos: getVal(parts, digiIdx) || getVal(parts, 9),
-                            nama_outlet: getVal(parts, outletIdx) || getVal(parts, 10)
+                            remarks: getVal(parts, remarksIdx),
+                            salesforce: getVal(parts, sfIdx),
+                            tap: getVal(parts, tapIdx),
+                            id_digipos: getVal(parts, digiIdx),
+                            nama_outlet: getVal(parts, outletIdx)
                         });
                      }
                 }

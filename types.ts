@@ -85,6 +85,7 @@ export interface DashboardStats {
 export interface TopupTransaction {
   id: number;
   transaction_date: string;
+  transaction_id?: string; // Added field
   sender: string;
   receiver: string;
   transaction_type: string;
