@@ -141,7 +141,38 @@ export const bulkAddBucketTransactions = async (newItems: any[]) => {
     if (!res.ok) throw new Error('Failed to upload bucket');
 };
 
+// --- DASHBOARD SUMMARY ---
+export const getDashboardSummary = async (params: { 
+    startDate?: string; 
+    endDate?: string; 
+    salesforce?: string; 
+    tap?: string;
+}): Promise<any> => {
+    let url = `${API_URL}/dashboard/summary`;
+    const query = new URLSearchParams();
+    if (params.startDate) query.append('startDate', params.startDate);
+    if (params.endDate) query.append('endDate', params.endDate);
+    if (params.salesforce) query.append('salesforce', params.salesforce);
+    if (params.tap) query.append('tap', params.tap);
+    
+    url += `?${query.toString()}`;
+
+    const res = await fetch(url, { headers: getHeaders() });
+    if (!res.ok) return null;
+    return res.json();
+};
+
 // --- ADISTI ---
+
+export const bulkAddAdistiTransactions = async (items: any[]) => {
+    const res = await fetch(`${API_URL}/adisti/bulk`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify(items)
+    });
+    if (!res.ok) throw new Error('Failed to upload adisti transactions');
+    return res.json();
+};
 
 // Get unique filter options (salesforce and taps)
 export const getAdistiFilters = async (taps?: string[]): Promise<{ sales: string[], taps: string[] }> => {
@@ -283,16 +314,7 @@ export const getAdistiProductSummary = async (params?: {
     return res.json();
 };
 
-export const bulkAddAdistiTransactions = async (newItems: any[]) => {
-    const res = await fetch(`${API_URL}/adisti/bulk`, {
-        method: 'POST',
-        headers: getHeaders(),
-        body: JSON.stringify(newItems)
-    });
-    if (!res.ok) throw new Error('Failed to upload adisti');
-};
-
-// --- SELLTHRU (NEW) ---
+// --- SELLTHRU ---
 
 export const getSellthruFilters = async (taps?: string[]): Promise<{ sales: string[], taps: string[] }> => {
     let url = `${API_URL}/sellthru/filters`;
@@ -301,6 +323,7 @@ export const getSellthruFilters = async (taps?: string[]): Promise<{ sales: stri
         query.append('tap', taps.join(','));
         url += `?${query.toString()}`;
     }
+    
     const res = await fetch(url, { headers: getHeaders() });
     if (!res.ok) return { sales: [], taps: [] };
     return res.json();
@@ -329,15 +352,56 @@ export const getSellthruTransactions = async (params?: {
         if (params.sortBy) query.append('sortBy', params.sortBy);
         if (params.sortOrder) query.append('sortOrder', params.sortOrder);
         
-        if (params.salesforce) query.append('salesforce', Array.isArray(params.salesforce) ? params.salesforce.join(',') : params.salesforce);
-        if (params.tap) query.append('tap', Array.isArray(params.tap) ? params.tap.join(',') : params.tap);
+        if (params.salesforce) {
+            query.append('salesforce', Array.isArray(params.salesforce) ? params.salesforce.join(',') : params.salesforce);
+        }
+        if (params.tap) {
+             query.append('tap', Array.isArray(params.tap) ? params.tap.join(',') : params.tap);
+        }
         
         url += `?${query.toString()}`;
     }
 
     const res = await fetch(url, { headers: getHeaders() });
     if (!res.ok) return { data: [], total: 0, page: 1, totalPages: 1 };
+    
     return res.json();
+};
+
+export const downloadSellthruReport = async (params?: { 
+    search?: string;
+    startDate?: string;
+    endDate?: string;
+    salesforce?: string | string[];
+    tap?: string | string[];
+    sortBy?: string;
+    sortOrder?: 'asc' | 'desc';
+}) => {
+    let url = `${API_URL}/sellthru/export`;
+    if (params) {
+        const query = new URLSearchParams();
+        if (params.search) query.append('search', params.search);
+        if (params.startDate) query.append('startDate', params.startDate);
+        if (params.endDate) query.append('endDate', params.endDate);
+        if (params.sortBy) query.append('sortBy', params.sortBy);
+        if (params.sortOrder) query.append('sortOrder', params.sortOrder);
+        if (params.salesforce) query.append('salesforce', Array.isArray(params.salesforce) ? params.salesforce.join(',') : params.salesforce);
+        if (params.tap) query.append('tap', Array.isArray(params.tap) ? params.tap.join(',') : params.tap);
+        url += `?${query.toString()}`;
+    }
+
+    const res = await fetch(url, { headers: getHeaders() });
+    if (!res.ok) throw new Error('Gagal mendownload file');
+    
+    const blob = await res.blob();
+    const downloadUrl = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    a.download = `sellthru_report_${new Date().toISOString().split('T')[0]}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(downloadUrl);
+    document.body.removeChild(a);
 };
 
 export const getSellthruSummaryTree = async (params?: { 
@@ -382,40 +446,4 @@ export const getSellthruProductSummary = async (params?: {
     const res = await fetch(url, { headers: getHeaders() });
     if (!res.ok) return [];
     return res.json();
-};
-
-export const downloadSellthruReport = async (params?: { 
-    search?: string;
-    startDate?: string;
-    endDate?: string;
-    salesforce?: string | string[];
-    tap?: string | string[];
-    sortBy?: string;
-    sortOrder?: 'asc' | 'desc';
-}) => {
-    let url = `${API_URL}/sellthru/export`;
-    if (params) {
-        const query = new URLSearchParams();
-        if (params.search) query.append('search', params.search);
-        if (params.startDate) query.append('startDate', params.startDate);
-        if (params.endDate) query.append('endDate', params.endDate);
-        if (params.sortBy) query.append('sortBy', params.sortBy);
-        if (params.sortOrder) query.append('sortOrder', params.sortOrder);
-        if (params.salesforce) query.append('salesforce', Array.isArray(params.salesforce) ? params.salesforce.join(',') : params.salesforce);
-        if (params.tap) query.append('tap', Array.isArray(params.tap) ? params.tap.join(',') : params.tap);
-        url += `?${query.toString()}`;
-    }
-
-    const res = await fetch(url, { headers: getHeaders() });
-    if (!res.ok) throw new Error('Gagal mendownload file');
-    
-    const blob = await res.blob();
-    const downloadUrl = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = downloadUrl;
-    a.download = `sellthru_report_${new Date().toISOString().split('T')[0]}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    window.URL.revokeObjectURL(downloadUrl);
-    document.body.removeChild(a);
 };
