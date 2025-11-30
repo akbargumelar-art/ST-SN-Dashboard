@@ -1,6 +1,3 @@
-
-
-
 import { SerialNumber, SNStatus, User, TopupTransaction, AdistiTransaction } from '../types';
 
 const API_URL = '/api';
@@ -249,6 +246,29 @@ export const getAdistiSummaryTree = async (params?: {
     tap?: string | string[];
 }): Promise<any[]> => {
     let url = `${API_URL}/adisti/summary-tree`;
+    if (params) {
+        const query = new URLSearchParams();
+        if (params.search) query.append('search', params.search);
+        if (params.startDate) query.append('startDate', params.startDate);
+        if (params.endDate) query.append('endDate', params.endDate);
+        if (params.salesforce) query.append('salesforce', Array.isArray(params.salesforce) ? params.salesforce.join(',') : params.salesforce);
+        if (params.tap) query.append('tap', Array.isArray(params.tap) ? params.tap.join(',') : params.tap);
+        url += `?${query.toString()}`;
+    }
+    const res = await fetch(url, { headers: getHeaders() });
+    if (!res.ok) return [];
+    return res.json();
+};
+
+// Get Product Summary
+export const getAdistiProductSummary = async (params?: { 
+    search?: string;
+    startDate?: string;
+    endDate?: string;
+    salesforce?: string | string[];
+    tap?: string | string[];
+}): Promise<{product_name: string, total: number}[]> => {
+    let url = `${API_URL}/adisti/summary-products`;
     if (params) {
         const query = new URLSearchParams();
         if (params.search) query.append('search', params.search);

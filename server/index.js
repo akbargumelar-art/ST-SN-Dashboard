@@ -545,6 +545,72 @@ app.get('/api/adisti/summary-tree', async (req, res) => {
     }
 });
 
+// Adisti Product Summary Endpoint
+app.get('/api/adisti/summary-products', async (req, res) => {
+    try {
+        const startDate = req.query.startDate || '';
+        const endDate = req.query.endDate || '';
+        const search = req.query.search || '';
+        const salesforce = req.query.salesforce || '';
+        const tap = req.query.tap || '';
+
+        let whereClause = 'WHERE 1=1';
+        const params = [];
+
+        if (search) {
+             whereClause += ` AND (sn_number LIKE ? OR product_name LIKE ? OR nama_outlet LIKE ?)`;
+             params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+        }
+        
+        if (salesforce && salesforce !== 'all') {
+             const sfArray = salesforce.split(',').map(s => s.trim());
+             if (sfArray.length > 0) {
+                 whereClause += ` AND salesforce_name IN (?)`;
+                 params.push(sfArray);
+             }
+        }
+        if (tap && tap !== 'all') {
+             const tapArray = tap.split(',').map(t => t.trim());
+             if (tapArray.length > 0) {
+                 whereClause += ` AND tap IN (?)`;
+                 params.push(tapArray);
+             }
+        }
+
+        if (startDate) {
+             whereClause += ` AND (
+                (created_at REGEXP '^[0-9]{4}-[0-9]{2}-[0-9]{2}' AND created_at >= ?) OR 
+                (created_at REGEXP '^[0-9]{2}/[0-9]{2}/[0-9]{4}' AND STR_TO_DATE(created_at, '%d/%m/%Y') >= ?)
+            )`;
+            params.push(startDate, startDate);
+        }
+        if (endDate) {
+             whereClause += ` AND (
+                (created_at REGEXP '^[0-9]{4}-[0-9]{2}-[0-9]{2}' AND created_at <= ?) OR 
+                (created_at REGEXP '^[0-9]{2}/[0-9]{2}/[0-9]{4}' AND STR_TO_DATE(created_at, '%d/%m/%Y') <= ?)
+            )`;
+            params.push(endDate, endDate);
+        }
+
+        const query = `
+            SELECT 
+                COALESCE(product_name, 'Unknown') as product_name, 
+                COUNT(*) as total 
+            FROM adisti_transactions 
+            ${whereClause} 
+            GROUP BY product_name 
+            ORDER BY total DESC
+        `;
+        
+        const [rows] = await db.query(query, params);
+        res.json(rows);
+
+    } catch (err) {
+        console.error("Summary Product Error:", err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // Serve Frontend Static Files
 app.use(express.static(path.join(__dirname, '../dist')));
 

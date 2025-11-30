@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { User, UserRole, SerialNumber, AdistiTransaction } from '../types';
-import { getAdistiTransactions, getAdistiFilters, downloadAdistiReport, getAdistiSummaryTree } from '../services/storage';
-import { Search, Download, ChevronLeft, ChevronRight, ArrowUpDown, Loader2, ChevronDown, ChevronUp, Package, Users, MapPin, CheckSquare, Square } from 'lucide-react';
+import { getAdistiTransactions, getAdistiFilters, downloadAdistiReport, getAdistiSummaryTree, getAdistiProductSummary } from '../services/storage';
+import { Search, Download, ChevronLeft, ChevronRight, ArrowUpDown, Loader2, ChevronDown, ChevronUp, Package, Users, MapPin, CheckSquare, Square, ShoppingBag } from 'lucide-react';
 
 interface ListSNProps {
   user: User;
@@ -154,6 +154,7 @@ const ListSN: React.FC<ListSNProps> = ({ user }) => {
   const [transactions, setTransactions] = useState<AdistiTransaction[]>([]);
   const [loading, setLoading] = useState(false);
   const [summaryTree, setSummaryTree] = useState<any[]>([]);
+  const [productSummary, setProductSummary] = useState<any[]>([]);
   const [loadingSummary, setLoadingSummary] = useState(false);
   
   // Options for Dropdowns
@@ -238,9 +239,10 @@ const ListSN: React.FC<ListSNProps> = ({ user }) => {
           };
 
           // Parallel Fetch
-          const [result, treeResult] = await Promise.all([
+          const [result, treeResult, prodResult] = await Promise.all([
               getAdistiTransactions(params),
-              getAdistiSummaryTree(params)
+              getAdistiSummaryTree(params),
+              getAdistiProductSummary(params)
           ]);
           
           if (result && Array.isArray(result.data)) {
@@ -260,6 +262,10 @@ const ListSN: React.FC<ListSNProps> = ({ user }) => {
 
           if (Array.isArray(treeResult)) {
               setSummaryTree(treeResult);
+          }
+
+          if (Array.isArray(prodResult)) {
+            setProductSummary(prodResult);
           }
 
           setHasSearched(true);
@@ -303,6 +309,18 @@ const ListSN: React.FC<ListSNProps> = ({ user }) => {
       }
   };
 
+  const formatDisplayDate = (dateString: string) => {
+      if (!dateString) return '-';
+      // Check if it's already in DD/MM/YYYY format or similar non-standard format
+      if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(dateString)) return dateString;
+      
+      // Try parsing as standard date
+      const date = new Date(dateString);
+      if (isNaN(date.getTime())) return dateString; // Fallback to original string if invalid
+      
+      return date.toLocaleDateString('id-ID', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  };
+
   const SortableTh = ({ label, sortKey, className = "" }: { label: string, sortKey: string, className?: string }) => (
     <th 
       className={`px-4 py-3 font-bold text-slate-900 text-xs uppercase tracking-wider cursor-pointer hover:bg-slate-100 select-none transition-colors sticky top-0 bg-slate-50 z-10 ${className}`}
@@ -322,27 +340,6 @@ const ListSN: React.FC<ListSNProps> = ({ user }) => {
           <p className="text-slate-500">Database Master Distribusi</p>
         </div>
       </div>
-
-      {/* Summary Section (Tree Table) */}
-      {hasSearched && (
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex-shrink-0">
-            <div className="bg-slate-50 px-4 py-3 border-b border-slate-200 flex justify-between items-center">
-                <h3 className="font-bold text-slate-700 text-sm">Summary Kontribusi (Hierarchy)</h3>
-                <span className="text-xs text-slate-500">Tap &gt; Sales &gt; Produk</span>
-            </div>
-            <div className="max-h-64 overflow-y-auto">
-                {loadingSummary ? (
-                    <div className="p-8 text-center"><Loader2 className="animate-spin mx-auto text-purple-600"/></div>
-                ) : summaryTree.length === 0 ? (
-                    <div className="p-4 text-center text-sm text-slate-500">Tidak ada data summary.</div>
-                ) : (
-                    summaryTree.map((tap, idx) => (
-                        <SummaryTreeItem key={`${tap.name}-${idx}`} item={tap} level={0} />
-                    ))
-                )}
-            </div>
-        </div>
-      )}
 
       {/* Filters */}
       <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4 flex-shrink-0">
@@ -410,6 +407,46 @@ const ListSN: React.FC<ListSNProps> = ({ user }) => {
          )}
       </div>
 
+      {/* Product Summary (Grid) */}
+      {hasSearched && (
+        <div className="flex-shrink-0">
+             <div className="bg-slate-50 px-4 py-2 border-b border-slate-200 border-t rounded-t-xl flex justify-between items-center">
+                <h3 className="font-bold text-slate-700 text-sm flex items-center gap-2"><ShoppingBag size={16}/> Summary Produk</h3>
+                <span className="text-xs text-slate-500">Total SN per Produk</span>
+            </div>
+            <div className="bg-white p-4 rounded-b-xl shadow-sm border border-slate-200 border-t-0 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3 max-h-40 overflow-y-auto">
+                {productSummary.map((prod, idx) => (
+                    <div key={idx} className="bg-slate-50 p-2 rounded-lg border border-slate-100 hover:border-purple-200 transition-colors">
+                        <p className="text-[10px] text-slate-500 uppercase font-bold truncate" title={prod.product_name}>{prod.product_name}</p>
+                        <p className="text-lg font-bold text-purple-700">{prod.total.toLocaleString()}</p>
+                    </div>
+                ))}
+                {productSummary.length === 0 && <p className="text-sm text-slate-400 col-span-full text-center">Tidak ada data.</p>}
+            </div>
+        </div>
+      )}
+
+      {/* Summary Tree (Hierarchy) */}
+      {hasSearched && (
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex-shrink-0">
+            <div className="bg-slate-50 px-4 py-3 border-b border-slate-200 flex justify-between items-center">
+                <h3 className="font-bold text-slate-700 text-sm">Summary Kontribusi (Hierarchy)</h3>
+                <span className="text-xs text-slate-500">Tap &gt; Sales &gt; Produk</span>
+            </div>
+            <div className="max-h-64 overflow-y-auto">
+                {loadingSummary ? (
+                    <div className="p-8 text-center"><Loader2 className="animate-spin mx-auto text-purple-600"/></div>
+                ) : summaryTree.length === 0 ? (
+                    <div className="p-4 text-center text-sm text-slate-500">Tidak ada data summary.</div>
+                ) : (
+                    summaryTree.map((tap, idx) => (
+                        <SummaryTreeItem key={`${tap.name}-${idx}`} item={tap} level={0} />
+                    ))
+                )}
+            </div>
+        </div>
+      )}
+
       {/* Table Section */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex-1 flex flex-col min-h-0 relative">
         {loading && (
@@ -445,7 +482,7 @@ const ListSN: React.FC<ListSNProps> = ({ user }) => {
                         transactions.map((item, idx) => (
                             <tr key={item.id || idx} className="hover:bg-purple-50/30 transition-colors">
                             <td className="px-4 py-3 text-sm text-slate-600 whitespace-nowrap">
-                                {item.created_at ? new Date(item.created_at).toLocaleDateString('id-ID', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '-'}
+                                {formatDisplayDate(item.created_at)}
                             </td>
                             <td className="px-4 py-3 font-mono text-sm font-bold text-slate-800">{item.sn_number}</td>
                             <td className="px-4 py-3 text-sm text-slate-700 max-w-[200px] truncate" title={item.product_name}>{item.product_name}</td>
