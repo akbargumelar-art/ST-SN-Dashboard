@@ -22,6 +22,7 @@ export enum SNStatus {
   GAGAL_ST = 'Gagal ST'
 }
 
+// Master Stock Data (Table: serial_numbers)
 export interface SerialNumber {
   id: number;
   sn_number: string;
@@ -35,12 +36,30 @@ export interface SerialNumber {
   qr_code_url: string;
   salesforce_name: string;
   tap: string;
-  price?: number;
-  transaction_id?: string;
   no_rs?: string;
+  // Legacy optional fields kept for compatibility during migration, 
+  // but SellthruTransaction is preferred for sales reports
   id_digipos?: string;
   nama_outlet?: string;
-  sellthru_date?: string; // New field
+  price?: number;
+  transaction_id?: string;
+  sellthru_date?: string;
+}
+
+// Sales Data (Table: sellthru_transactions)
+export interface SellthruTransaction {
+  id: number;
+  sn_number: string;
+  sellthru_date: string;
+  id_digipos: string;
+  nama_outlet: string;
+  price: number;
+  transaction_id: string;
+  product_name: string;
+  salesforce_name: string;
+  tap: string;
+  flag: string;
+  created_at: string;
 }
 
 export interface AdistiTransaction {

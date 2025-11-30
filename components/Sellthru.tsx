@@ -1,11 +1,12 @@
+
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { User, SerialNumber } from '../types';
+import { User, SellthruTransaction } from '../types';
 import { getSellthruTransactions, getSellthruFilters, downloadSellthruReport, getSellthruSummaryTree, getSellthruProductSummary } from '../services/storage';
-import { Search, Download, ChevronLeft, ChevronRight, ArrowUpDown, Loader2, ChevronDown, ChevronUp, Package, Users, MapPin, CheckSquare, Square, ShoppingBag, Store } from 'lucide-react';
+import { Search, Download, ChevronLeft, ChevronRight, ArrowUpDown, Loader2, ChevronDown, ShoppingBag, Store, CheckSquare, Square, Package, MapPin, Users } from 'lucide-react';
 
 interface SellthruProps {
   user: User;
-  data: SerialNumber[]; // Kept for prop compatibility but unused (using server-side)
+  data: any[]; // Kept for prop compatibility but unused
 }
 
 type SortConfig = {
@@ -150,7 +151,7 @@ const SummaryTreeItem: React.FC<SummaryTreeItemProps> = ({ item, level }) => {
 };
 
 const Sellthru: React.FC<SellthruProps> = ({ user }) => {
-  const [transactions, setTransactions] = useState<SerialNumber[]>([]);
+  const [transactions, setTransactions] = useState<SellthruTransaction[]>([]);
   const [loading, setLoading] = useState(false);
   const [summaryTree, setSummaryTree] = useState<any[]>([]);
   const [productSummary, setProductSummary] = useState<any[]>([]);

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { bulkAddSerialNumbers, bulkUpdateStatus, bulkAddTopupTransactions, bulkAddBucketTransactions, bulkAddAdistiTransactions } from '../services/storage';
+import { bulkAddSerialNumbers, bulkAddSellthruTransactions, bulkAddTopupTransactions, bulkAddBucketTransactions, bulkAddAdistiTransactions } from '../services/storage';
 import { UploadCloud, AlertCircle, FileSpreadsheet, Plus, Wallet, List, Receipt, ChevronDown, ChevronUp, CheckCircle2, Loader2, Download, Lock } from 'lucide-react';
 
 interface InputFormProps {
@@ -384,8 +384,9 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess, setIsGlobalProcessing 
             await uploadInChunks(finalParsedItems, bulkAddSerialNumbers);
             setSuccessMsg(`SUKSES TOTAL: ${count} Data Report SN berhasil tersimpan di Database.`);
         } else if (uploadMode === 'update') {
-            await uploadInChunks(finalParsedItems, bulkUpdateStatus);
-            setSuccessMsg(`SUKSES TOTAL: ${count} Data Sellthru berhasil diproses.`);
+            // Using new architecture function
+            await uploadInChunks(finalParsedItems, bulkAddSellthruTransactions);
+            setSuccessMsg(`SUKSES TOTAL: ${count} Data Sellthru berhasil diproses (Arsitektur Baru).`);
         } else if (uploadMode === 'topup') {
             await uploadInChunks(finalParsedItems, bulkAddTopupTransactions);
             setSuccessMsg(`SUKSES TOTAL: ${count} Data Topup berhasil tersimpan.`);

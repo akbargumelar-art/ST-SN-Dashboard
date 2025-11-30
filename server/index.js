@@ -34,14 +34,11 @@ app.post('/api/login', async (req, res) => {
         if (users.length === 0) return res.status(400).json({ message: 'User not found' });
 
         const user = users[0];
-        // Check hardcoded password for initial setup if hash fails (fallback) or use bcrypt
         const match = await bcrypt.compare(password, user.password);
-        // Simple fallback for plain text '123456' if not hashed yet in DB manually
         const isDefaultPass = password === user.password; 
         
         if (!match && !isDefaultPass) return res.status(400).json({ message: 'Invalid password' });
 
-        // Check if user needs to change password (e.g. default '123456')
         const mustChangePassword = password === '123456';
 
         const token = jwt.sign({ id: user.id, role: user.role, username: user.username }, SECRET_KEY, { expiresIn: '12h' });
@@ -127,8 +124,6 @@ app.delete('/api/users/:id', authenticateToken, async (req, res) => {
 // --- SERIAL NUMBERS ---
 app.get('/api/serial-numbers', authenticateToken, async (req, res) => {
     try {
-        // Simple fetch all (optimize later with pagination if needed for this endpoint)
-        // For Dashboard & Sellthru, we usually need recent data
         const [rows] = await db.query('SELECT * FROM serial_numbers ORDER BY created_at DESC LIMIT 5000');
         res.json(rows);
     } catch (err) {
@@ -137,7 +132,7 @@ app.get('/api/serial-numbers', authenticateToken, async (req, res) => {
 });
 
 app.post('/api/serial-numbers/bulk', authenticateToken, async (req, res) => {
-    const items = req.body; // Array of objects
+    const items = req.body;
     if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ message: 'No data provided' });
 
     const connection = await db.getConnection();
@@ -176,43 +171,91 @@ app.put('/api/serial-numbers/:id/status', authenticateToken, async (req, res) =>
     }
 });
 
-app.post('/api/serial-numbers/sellthru', authenticateToken, async (req, res) => {
+// --- SELLTHRU (NEW ARCHITECTURE) ---
+
+// POST Bulk Sellthru (Populate from Master SN)
+app.post('/api/sellthru/bulk', authenticateToken, async (req, res) => {
     const items = req.body; // [{ sn_number, id_digipos, nama_outlet, price, transaction_id, sellthru_date }]
+    if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ message: 'No data provided' });
+
     const connection = await db.getConnection();
     try {
         await connection.beginTransaction();
-        for (const item of items) {
-            await connection.query(
-                `UPDATE serial_numbers 
-                 SET status = 'Sukses ST', id_digipos = ?, nama_outlet = ?, price = ?, transaction_id = ?, sellthru_date = ?
-                 WHERE sn_number = ?`,
-                [item.id_digipos, item.nama_outlet, item.price, item.transaction_id, item.sellthru_date, item.sn_number]
-            );
+
+        // 1. Get List of SNs
+        const snList = items.map(i => i.sn_number);
+        if (snList.length === 0) {
+            return res.json({ message: 'No SNs provided' });
         }
+
+        // 2. Fetch Master Details (Sales, Product, Tap, Flag) from serial_numbers
+        const [masterRows] = await connection.query(
+            'SELECT sn_number, product_name, salesforce_name, tap, flag FROM serial_numbers WHERE sn_number IN (?)',
+            [snList]
+        );
+        
+        const masterMap = new Map();
+        masterRows.forEach(row => masterMap.set(row.sn_number, row));
+
+        const insertValues = [];
+        const updateSNs = [];
+
+        // 3. Prepare Insert Data
+        for (const item of items) {
+            const master = masterMap.get(item.sn_number);
+            if (master) {
+                insertValues.push([
+                    item.sn_number,
+                    item.sellthru_date || new Date().toISOString().split('T')[0],
+                    item.id_digipos || '-',
+                    item.nama_outlet || '-',
+                    item.price || 0,
+                    item.transaction_id || '-',
+                    master.product_name || 'Unknown',
+                    master.salesforce_name || 'Unknown',
+                    master.tap || 'Unknown',
+                    master.flag || '-'
+                ]);
+                updateSNs.push(item.sn_number);
+            }
+        }
+
+        if (insertValues.length > 0) {
+            // 4. Insert into sellthru_transactions
+            const insertQuery = `
+                INSERT INTO sellthru_transactions 
+                (sn_number, sellthru_date, id_digipos, nama_outlet, price, transaction_id, product_name, salesforce_name, tap, flag)
+                VALUES ?
+            `;
+            await connection.query(insertQuery, [insertValues]);
+
+            // 5. Update Status in serial_numbers
+            const updateQuery = `UPDATE serial_numbers SET status = 'Sukses ST' WHERE sn_number IN (?)`;
+            await connection.query(updateQuery, [updateSNs]);
+        }
+
         await connection.commit();
-        res.json({ message: 'Sellthru updated' });
+        res.json({ message: `Berhasil memproses ${insertValues.length} data Sellthru.` });
     } catch (err) {
         await connection.rollback();
+        console.error("Sellthru Upload Error:", err);
         res.status(500).json({ error: err.message });
     } finally {
         connection.release();
     }
 });
 
-// --- SELLTHRU SERVER-SIDE (NEW) ---
-
 // 1. Get Filters for Sellthru
 app.get('/api/sellthru/filters', async (req, res) => {
     try {
         const selectedTap = req.query.tap; 
-        const statusClause = "status = 'Sukses ST'"; // Strict filter for Sellthru
 
         // Get Taps
-        const [tapRows] = await db.query(`SELECT DISTINCT tap FROM serial_numbers WHERE ${statusClause} AND tap IS NOT NULL AND tap != "" ORDER BY tap`);
+        const [tapRows] = await db.query(`SELECT DISTINCT tap FROM sellthru_transactions WHERE tap IS NOT NULL AND tap != "" ORDER BY tap`);
         const taps = tapRows.map(r => r.tap);
 
         // Get Sales (Filtered by TAP if provided)
-        let salesQuery = `SELECT DISTINCT salesforce_name FROM serial_numbers WHERE ${statusClause} AND salesforce_name IS NOT NULL AND salesforce_name != ""`;
+        let salesQuery = `SELECT DISTINCT salesforce_name FROM sellthru_transactions WHERE salesforce_name IS NOT NULL AND salesforce_name != ""`;
         let salesParams = [];
         
         if (selectedTap) {
@@ -248,7 +291,7 @@ app.get('/api/sellthru', async (req, res) => {
         const sortBy = req.query.sortBy || 'created_at';
         const sortOrder = req.query.sortOrder === 'asc' ? 'ASC' : 'DESC';
 
-        let whereClause = "WHERE status = 'Sukses ST'"; // Base Filter
+        let whereClause = "WHERE 1=1"; // sellthru_transactions only has success data
         const params = [];
 
         if (search) {
@@ -273,46 +316,23 @@ app.get('/api/sellthru', async (req, res) => {
         }
 
         if (startDate) {
-            whereClause += ` AND (
-                (sellthru_date IS NOT NULL AND sellthru_date >= ?) OR 
-                (sellthru_date IS NULL AND (
-                   (created_at REGEXP '^[0-9]{4}-[0-9]{2}-[0-9]{2}' AND created_at >= ?) OR 
-                   (created_at REGEXP '^[0-9]{2}/[0-9]{2}/[0-9]{4}' AND STR_TO_DATE(created_at, '%d/%m/%Y') >= ?)
-                ))
-            )`;
-            params.push(startDate, startDate, startDate);
+            whereClause += ` AND sellthru_date >= ?`;
+            params.push(startDate);
         }
         if (endDate) {
-            whereClause += ` AND (
-                (sellthru_date IS NOT NULL AND sellthru_date <= ?) OR 
-                (sellthru_date IS NULL AND (
-                    (created_at REGEXP '^[0-9]{4}-[0-9]{2}-[0-9]{2}' AND created_at <= ?) OR 
-                    (created_at REGEXP '^[0-9]{2}/[0-9]{2}/[0-9]{4}' AND STR_TO_DATE(created_at, '%d/%m/%Y') <= ?)
-                ))
-            )`;
-            params.push(endDate, endDate, endDate);
+            whereClause += ` AND sellthru_date <= ?`;
+            params.push(endDate);
         }
 
         // Count Total
-        const [countResult] = await db.query(`SELECT COUNT(*) as total FROM serial_numbers ${whereClause}`, params);
+        const [countResult] = await db.query(`SELECT COUNT(*) as total FROM sellthru_transactions ${whereClause}`, params);
         const total = countResult[0].total;
 
         // Sorting
         const allowedSorts = ['created_at', 'sellthru_date', 'sn_number', 'product_name', 'salesforce_name', 'tap', 'price', 'transaction_id', 'nama_outlet', 'id_digipos'];
         const cleanSortBy = allowedSorts.includes(sortBy) ? sortBy : 'created_at';
         
-        let orderClause = `${cleanSortBy} ${sortOrder}`;
-        if (cleanSortBy === 'created_at') {
-             orderClause = `
-                CASE 
-                    WHEN created_at REGEXP '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN created_at 
-                    WHEN created_at REGEXP '^[0-9]{2}/[0-9]{2}/[0-9]{4}' THEN STR_TO_DATE(created_at, '%d/%m/%Y')
-                    ELSE created_at 
-                END ${sortOrder}
-            `;
-        }
-
-        const query = `SELECT * FROM serial_numbers ${whereClause} ORDER BY ${orderClause} LIMIT ? OFFSET ?`;
+        const query = `SELECT * FROM sellthru_transactions ${whereClause} ORDER BY ${cleanSortBy} ${sortOrder} LIMIT ? OFFSET ?`;
         const [rows] = await db.query(query, [...params, limit, offset]);
 
         res.json({
@@ -335,7 +355,7 @@ app.get('/api/sellthru/summary-tree', async (req, res) => {
         const salesforce = req.query.salesforce || '';
         const tap = req.query.tap || '';
 
-        let whereClause = "WHERE status = 'Sukses ST'";
+        let whereClause = "WHERE 1=1";
         const params = [];
 
         if (search) {
@@ -357,24 +377,12 @@ app.get('/api/sellthru/summary-tree', async (req, res) => {
              }
         }
         if (startDate) {
-             whereClause += ` AND (
-                (sellthru_date IS NOT NULL AND sellthru_date >= ?) OR 
-                (sellthru_date IS NULL AND (
-                   (created_at REGEXP '^[0-9]{4}-[0-9]{2}-[0-9]{2}' AND created_at >= ?) OR 
-                   (created_at REGEXP '^[0-9]{2}/[0-9]{2}/[0-9]{4}' AND STR_TO_DATE(created_at, '%d/%m/%Y') >= ?)
-                ))
-            )`;
-            params.push(startDate, startDate, startDate);
+             whereClause += ` AND sellthru_date >= ?`;
+            params.push(startDate);
         }
         if (endDate) {
-             whereClause += ` AND (
-                (sellthru_date IS NOT NULL AND sellthru_date <= ?) OR 
-                (sellthru_date IS NULL AND (
-                    (created_at REGEXP '^[0-9]{4}-[0-9]{2}-[0-9]{2}' AND created_at <= ?) OR 
-                    (created_at REGEXP '^[0-9]{2}/[0-9]{2}/[0-9]{4}' AND STR_TO_DATE(created_at, '%d/%m/%Y') <= ?)
-                ))
-            )`;
-            params.push(endDate, endDate, endDate);
+             whereClause += ` AND sellthru_date <= ?`;
+            params.push(endDate);
         }
 
         const query = `
@@ -383,7 +391,7 @@ app.get('/api/sellthru/summary-tree', async (req, res) => {
                 COALESCE(salesforce_name, 'Unknown') as salesforce, 
                 COALESCE(product_name, 'Unknown') as product, 
                 COUNT(*) as count 
-            FROM serial_numbers 
+            FROM sellthru_transactions 
             ${whereClause} 
             GROUP BY tap, salesforce_name, product_name 
             ORDER BY tap, salesforce_name, count DESC
@@ -432,7 +440,7 @@ app.get('/api/sellthru/summary-products', async (req, res) => {
         const salesforce = req.query.salesforce || '';
         const tap = req.query.tap || '';
 
-        let whereClause = "WHERE status = 'Sukses ST'";
+        let whereClause = "WHERE 1=1";
         const params = [];
 
         if (search) {
@@ -454,31 +462,19 @@ app.get('/api/sellthru/summary-products', async (req, res) => {
              }
         }
         if (startDate) {
-             whereClause += ` AND (
-                (sellthru_date IS NOT NULL AND sellthru_date >= ?) OR 
-                (sellthru_date IS NULL AND (
-                   (created_at REGEXP '^[0-9]{4}-[0-9]{2}-[0-9]{2}' AND created_at >= ?) OR 
-                   (created_at REGEXP '^[0-9]{2}/[0-9]{2}/[0-9]{4}' AND STR_TO_DATE(created_at, '%d/%m/%Y') >= ?)
-                ))
-            )`;
-            params.push(startDate, startDate, startDate);
+             whereClause += ` AND sellthru_date >= ?`;
+            params.push(startDate);
         }
         if (endDate) {
-             whereClause += ` AND (
-                (sellthru_date IS NOT NULL AND sellthru_date <= ?) OR 
-                (sellthru_date IS NULL AND (
-                    (created_at REGEXP '^[0-9]{4}-[0-9]{2}-[0-9]{2}' AND created_at <= ?) OR 
-                    (created_at REGEXP '^[0-9]{2}/[0-9]{2}/[0-9]{4}' AND STR_TO_DATE(created_at, '%d/%m/%Y') <= ?)
-                ))
-            )`;
-            params.push(endDate, endDate, endDate);
+             whereClause += ` AND sellthru_date <= ?`;
+            params.push(endDate);
         }
 
         const query = `
             SELECT 
                 COALESCE(product_name, 'Unknown') as product_name, 
                 COUNT(*) as total 
-            FROM serial_numbers 
+            FROM sellthru_transactions 
             ${whereClause} 
             GROUP BY product_name 
             ORDER BY total DESC
@@ -503,7 +499,7 @@ app.get('/api/sellthru/export', async (req, res) => {
         const sortBy = req.query.sortBy || 'created_at';
         const sortOrder = req.query.sortOrder === 'asc' ? 'ASC' : 'DESC';
 
-        let whereClause = "WHERE status = 'Sukses ST'";
+        let whereClause = "WHERE 1=1";
         const params = [];
 
         if (search) {
@@ -525,31 +521,19 @@ app.get('/api/sellthru/export', async (req, res) => {
              }
         }
         if (startDate) {
-            whereClause += ` AND (
-                (sellthru_date IS NOT NULL AND sellthru_date >= ?) OR 
-                (sellthru_date IS NULL AND (
-                   (created_at REGEXP '^[0-9]{4}-[0-9]{2}-[0-9]{2}' AND created_at >= ?) OR 
-                   (created_at REGEXP '^[0-9]{2}/[0-9]{2}/[0-9]{4}' AND STR_TO_DATE(created_at, '%d/%m/%Y') >= ?)
-                ))
-            )`;
-            params.push(startDate, startDate, startDate);
+            whereClause += ` AND sellthru_date >= ?`;
+            params.push(startDate);
         }
         if (endDate) {
-            whereClause += ` AND (
-                (sellthru_date IS NOT NULL AND sellthru_date <= ?) OR 
-                (sellthru_date IS NULL AND (
-                    (created_at REGEXP '^[0-9]{4}-[0-9]{2}-[0-9]{2}' AND created_at <= ?) OR 
-                    (created_at REGEXP '^[0-9]{2}/[0-9]{2}/[0-9]{4}' AND STR_TO_DATE(created_at, '%d/%m/%Y') <= ?)
-                ))
-            )`;
-            params.push(endDate, endDate, endDate);
+            whereClause += ` AND sellthru_date <= ?`;
+            params.push(endDate);
         }
 
-        const query = `SELECT * FROM serial_numbers ${whereClause} ORDER BY ${sortBy} ${sortOrder}`;
+        const query = `SELECT * FROM sellthru_transactions ${whereClause} ORDER BY ${sortBy} ${sortOrder}`;
         const [rows] = await db.query(query, params);
 
         // Generate CSV
-        const headers = ['sellthru_date', 'sn_number', 'product_name', 'flag', 'id_digipos', 'nama_outlet', 'sub_category', 'salesforce_name', 'tap', 'price', 'transaction_id'];
+        const headers = ['sellthru_date', 'sn_number', 'product_name', 'flag', 'id_digipos', 'nama_outlet', 'salesforce_name', 'tap', 'price', 'transaction_id'];
         const csvRows = [headers.join(',')];
         
         rows.forEach(row => {
@@ -665,7 +649,7 @@ app.get('/api/adisti/filters', async (req, res) => {
 app.get('/api/adisti', async (req, res) => {
     try {
         const page = parseInt(req.query.page) || 1;
-        const limit = parseInt(req.query.limit) || 50; // DEFAULT 50
+        const limit = parseInt(req.query.limit) || 50; 
         const offset = (page - 1) * limit;
 
         const search = req.query.search || '';
@@ -684,7 +668,6 @@ app.get('/api/adisti', async (req, res) => {
             params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
         }
 
-        // Multi-select for Salesforce
         if (salesforce && salesforce !== 'all') {
              const sfArray = salesforce.split(',').map(s => s.trim());
              if (sfArray.length > 0) {
@@ -693,7 +676,6 @@ app.get('/api/adisti', async (req, res) => {
              }
         }
         
-        // Multi-select for TAP
         if (tap && tap !== 'all') {
              const tapArray = tap.split(',').map(t => t.trim());
              if (tapArray.length > 0) {
@@ -702,7 +684,6 @@ app.get('/api/adisti', async (req, res) => {
              }
         }
 
-        // Robust Date Filter (Handle ISO and DD/MM/YYYY)
         if (startDate) {
             whereClause += ` AND (
                 (created_at REGEXP '^[0-9]{4}-[0-9]{2}-[0-9]{2}' AND created_at >= ?) OR 
@@ -722,14 +703,11 @@ app.get('/api/adisti', async (req, res) => {
         const [countResult] = await db.query(`SELECT COUNT(*) as total FROM adisti_transactions ${whereClause}`, params);
         const total = countResult[0].total;
 
-        // --- SORTING LOGIC ---
-        // Whitelist allowed columns to prevent SQL Injection
         const allowedSorts = ['created_at', 'sn_number', 'product_name', 'salesforce_name', 'tap', 'no_rs', 'id_digipos', 'nama_outlet'];
         const cleanSortBy = allowedSorts.includes(sortBy) ? sortBy : 'created_at';
 
         let orderClause = `${cleanSortBy} ${sortOrder}`;
         
-        // Handle Mixed Date Formats for Sorting
         if (cleanSortBy === 'created_at') {
              orderClause = `
                 CASE 
@@ -740,7 +718,6 @@ app.get('/api/adisti', async (req, res) => {
             `;
         }
 
-        // Get Data
         const query = `
             SELECT * FROM adisti_transactions 
             ${whereClause} 
@@ -763,7 +740,6 @@ app.get('/api/adisti', async (req, res) => {
     }
 });
 
-// Adisti Export CSV Endpoint
 app.get('/api/adisti/export', async (req, res) => {
     try {
         const search = req.query.search || '';
@@ -813,7 +789,6 @@ app.get('/api/adisti/export', async (req, res) => {
         const query = `SELECT * FROM adisti_transactions ${whereClause} ORDER BY ${sortBy} ${sortOrder}`;
         const [rows] = await db.query(query, params);
 
-        // Generate CSV
         const headers = ['created_at', 'sn_number', 'warehouse', 'product_name', 'salesforce_name', 'tap', 'no_rs', 'id_digipos', 'nama_outlet'];
         const csvRows = [headers.join(',')];
         
@@ -835,7 +810,6 @@ app.get('/api/adisti/export', async (req, res) => {
     }
 });
 
-// Adisti Summary Tree Endpoint
 app.get('/api/adisti/summary-tree', async (req, res) => {
     try {
         const startDate = req.query.startDate || '';
@@ -848,7 +822,6 @@ app.get('/api/adisti/summary-tree', async (req, res) => {
         const params = [];
 
         if (search) {
-             // ADD id_digipos to make search consistent across all views
              whereClause += ` AND (sn_number LIKE ? OR product_name LIKE ? OR nama_outlet LIKE ? OR id_digipos LIKE ?)`;
              params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
         }
@@ -897,7 +870,6 @@ app.get('/api/adisti/summary-tree', async (req, res) => {
         
         const [rows] = await db.query(query, params);
 
-        // Transform to Tree
         const tree = {};
         rows.forEach(row => {
             if (!tree[row.tap]) {
@@ -911,11 +883,10 @@ app.get('/api/adisti/summary-tree', async (req, res) => {
             tree[row.tap].salesforces[row.salesforce].total += row.count;
             tree[row.tap].salesforces[row.salesforce].products.push({
                 name: row.product,
-                total: row.count // renamed from 'count' to 'total' for consistency
+                total: row.count 
             });
         });
 
-        // Flatten to array
         const result = Object.values(tree).map(t => ({
             name: t.name,
             total: t.total,
@@ -934,7 +905,6 @@ app.get('/api/adisti/summary-tree', async (req, res) => {
     }
 });
 
-// Adisti Product Summary Endpoint
 app.get('/api/adisti/summary-products', async (req, res) => {
     try {
         const startDate = req.query.startDate || '';
@@ -947,7 +917,6 @@ app.get('/api/adisti/summary-products', async (req, res) => {
         const params = [];
 
         if (search) {
-             // ADD id_digipos to make search consistent across all views
              whereClause += ` AND (sn_number LIKE ? OR product_name LIKE ? OR nama_outlet LIKE ? OR id_digipos LIKE ?)`;
              params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
         }

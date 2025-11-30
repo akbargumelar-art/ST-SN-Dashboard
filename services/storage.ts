@@ -99,13 +99,13 @@ export const bulkAddSerialNumbers = async (newItems: any[]) => {
     if (!res.ok) throw new Error('Failed to upload data');
 };
 
-export const bulkUpdateStatus = async (items: any[]) => {
-    const res = await fetch(`${API_URL}/serial-numbers/sellthru`, {
+export const bulkAddSellthruTransactions = async (items: any[]) => {
+    const res = await fetch(`${API_URL}/sellthru/bulk`, {
         method: 'POST',
         headers: getHeaders(),
         body: JSON.stringify(items)
     });
-    if (!res.ok) throw new Error('Failed to update status');
+    if (!res.ok) throw new Error('Failed to upload sellthru transactions');
     return res.json();
 };
 
