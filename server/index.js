@@ -544,27 +544,14 @@ app.get('/api/dashboard/summary', authenticateToken, async (req, res) => {
         const totalTopup = topupRes[0].total || 0;
 
         // 2. Complex Logic for Sellthru Analysis
-        // Flow:
-        // - Filter Sellthru Transactions (Date/Sales/Tap)
-        // - MATCH: Check if sellthru.transaction_id EXISTS in bucket_transactions.transaction_id
-        // - IF MATCHED, then Check if sellthru.sn_number EXISTS in adisti_transactions.sn_number
-        // - Categorize as "Sales" (Valid) or "Securing" (Invalid/Unknown SN)
-        
         let sellthruQuery = `
             SELECT
-                -- Sum price ONLY if transaction is valid (exists in bucket) AND SN is valid (exists in adisti)
                 SUM(CASE WHEN b.transaction_id IS NOT NULL AND ad.sn_number IS NOT NULL THEN st.price ELSE 0 END) as sales_amount,
-                
-                -- Sum price ONLY if transaction is valid (exists in bucket) BUT SN is invalid (not in adisti)
                 SUM(CASE WHEN b.transaction_id IS NOT NULL AND ad.sn_number IS NULL THEN st.price ELSE 0 END) as securing_amount,
-
                 COUNT(CASE WHEN b.transaction_id IS NOT NULL AND ad.sn_number IS NOT NULL THEN 1 END) as sales_count,
                 COUNT(CASE WHEN b.transaction_id IS NOT NULL AND ad.sn_number IS NULL THEN 1 END) as securing_count
-
             FROM sellthru_transactions st
-            -- Check against Bucket (Transaction Validity)
             LEFT JOIN bucket_transactions b ON st.transaction_id = b.transaction_id
-            -- Check against Adisti (SN Validity)
             LEFT JOIN adisti_transactions ad ON st.sn_number = ad.sn_number
             WHERE 1=1
         `;
@@ -579,8 +566,6 @@ app.get('/api/dashboard/summary', authenticateToken, async (req, res) => {
         const [sellthruRes] = await db.query(sellthruQuery, sellthruParams);
         const { sales_amount, securing_amount, sales_count, securing_count } = sellthruRes[0];
 
-        // 3. Final Calculation
-        // Tagihan = Total Topup - Total Securing
         const totalTagihan = totalTopup - (securing_amount || 0);
 
         res.json({
@@ -600,11 +585,124 @@ app.get('/api/dashboard/summary', authenticateToken, async (req, res) => {
 
 
 // --- TOPUP & BUCKET ---
+app.get('/api/topup/filters', async (req, res) => {
+    try {
+        const selectedTap = req.query.tap; 
+        const [tapRows] = await db.query(`SELECT DISTINCT tap FROM topup_transactions WHERE tap IS NOT NULL AND tap != "" ORDER BY tap`);
+        const taps = tapRows.map(r => r.tap);
+
+        let salesQuery = `SELECT DISTINCT salesforce FROM topup_transactions WHERE salesforce IS NOT NULL AND salesforce != ""`;
+        let salesParams = [];
+        if (selectedTap) {
+            const tapArray = selectedTap.split(',').map(t => t.trim());
+            if (tapArray.length > 0) {
+                 salesQuery += ' AND tap IN (?)';
+                 salesParams.push(tapArray);
+            }
+        }
+        salesQuery += ' ORDER BY salesforce';
+
+        const [salesRows] = await db.query(salesQuery, salesParams);
+        const sales = salesRows.map(r => r.salesforce);
+        res.json({ sales, taps });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 app.get('/api/topup', authenticateToken, async (req, res) => {
     try {
-        const [rows] = await db.query('SELECT * FROM topup_transactions ORDER BY created_at DESC LIMIT 2000');
-        res.json(rows);
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 50; 
+        const offset = (page - 1) * limit;
+
+        const search = req.query.search || '';
+        const startDate = req.query.startDate || '';
+        const endDate = req.query.endDate || '';
+        const salesforce = req.query.salesforce || '';
+        const tap = req.query.tap || '';
+        const sortBy = req.query.sortBy || 'transaction_date';
+        const sortOrder = req.query.sortOrder === 'asc' ? 'ASC' : 'DESC';
+
+        let whereClause = "WHERE 1=1";
+        const params = [];
+
+        if (search) {
+            whereClause += ` AND (transaction_id LIKE ? OR salesforce LIKE ? OR remarks LIKE ?)`;
+            params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+        }
+        if (salesforce && salesforce !== 'all') {
+             const sfArray = salesforce.split(',').map(s => s.trim());
+             if (sfArray.length > 0) {
+                 whereClause += ` AND salesforce IN (?)`;
+                 params.push(sfArray);
+             }
+        }
+        if (tap && tap !== 'all') {
+             const tapArray = tap.split(',').map(t => t.trim());
+             if (tapArray.length > 0) {
+                 whereClause += ` AND tap IN (?)`;
+                 params.push(tapArray);
+             }
+        }
+        if (startDate) { whereClause += ` AND transaction_date >= ?`; params.push(startDate); }
+        if (endDate) { whereClause += ` AND transaction_date <= ?`; params.push(endDate); }
+
+        const [countResult] = await db.query(`SELECT COUNT(*) as total FROM topup_transactions ${whereClause}`, params);
+        const total = countResult[0].total;
+        
+        const query = `SELECT * FROM topup_transactions ${whereClause} ORDER BY ${sortBy} ${sortOrder} LIMIT ? OFFSET ?`;
+        const [rows] = await db.query(query, [...params, limit, offset]);
+
+        res.json({ data: rows, total, page, totalPages: Math.ceil(total / limit) });
     } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/api/topup/summary', authenticateToken, async (req, res) => {
+    try {
+        const startDate = req.query.startDate || '';
+        const endDate = req.query.endDate || '';
+        const salesforce = req.query.salesforce || '';
+        const tap = req.query.tap || '';
+        const search = req.query.search || '';
+
+        let whereClause = "WHERE 1=1";
+        const params = [];
+
+        if (search) {
+             whereClause += ` AND (transaction_id LIKE ? OR salesforce LIKE ? OR remarks LIKE ?)`;
+             params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+        }
+        if (startDate) { whereClause += ` AND transaction_date >= ?`; params.push(startDate); }
+        if (endDate) { whereClause += ` AND transaction_date <= ?`; params.push(endDate); }
+        if (salesforce && salesforce !== 'all') { 
+            const sfArray = salesforce.split(',').map(s => s.trim());
+            if (sfArray.length > 0) {
+                whereClause += ` AND salesforce IN (?)`;
+                params.push(sfArray);
+            }
+        }
+        if (tap && tap !== 'all') { 
+            const tapArray = tap.split(',').map(t => t.trim());
+            if (tapArray.length > 0) {
+                whereClause += ` AND tap IN (?)`;
+                params.push(tapArray);
+            }
+        }
+
+        const query = `
+            SELECT 
+                SUM(amount) as totalAmount, 
+                COUNT(*) as totalCount,
+                COUNT(DISTINCT sender) as uniqueSenders
+            FROM topup_transactions 
+            ${whereClause}
+        `;
+        const [rows] = await db.query(query, params);
+        res.json(rows[0]);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 app.post('/api/topup/bulk', authenticateToken, async (req, res) => {

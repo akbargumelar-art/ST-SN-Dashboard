@@ -1,3 +1,4 @@
+
 import { SerialNumber, SNStatus, User, TopupTransaction, AdistiTransaction } from '../types';
 
 const API_URL = '/api';
@@ -110,9 +111,69 @@ export const bulkAddSellthruTransactions = async (items: any[]) => {
 };
 
 // --- TOPUP ---
-export const getTopupTransactions = async (): Promise<TopupTransaction[]> => {
-    const res = await fetch(`${API_URL}/topup`, { headers: getHeaders() });
-    if (!res.ok) return [];
+
+export const getTopupFilters = async (taps?: string[]): Promise<{ sales: string[], taps: string[] }> => {
+    let url = `${API_URL}/topup/filters`;
+    if (taps && taps.length > 0) {
+        const query = new URLSearchParams();
+        query.append('tap', taps.join(','));
+        url += `?${query.toString()}`;
+    }
+    
+    const res = await fetch(url, { headers: getHeaders() });
+    if (!res.ok) return { sales: [], taps: [] };
+    return res.json();
+};
+
+export const getTopupTransactions = async (params?: { 
+    page?: number; 
+    limit?: number; 
+    search?: string;
+    startDate?: string;
+    endDate?: string;
+    salesforce?: string | string[];
+    tap?: string | string[];
+    sortBy?: string;
+    sortOrder?: 'asc' | 'desc';
+}): Promise<any> => {
+    let url = `${API_URL}/topup`;
+    if (params) {
+        const query = new URLSearchParams();
+        if (params.page) query.append('page', params.page.toString());
+        if (params.limit) query.append('limit', params.limit.toString());
+        if (params.search) query.append('search', params.search);
+        if (params.startDate) query.append('startDate', params.startDate);
+        if (params.endDate) query.append('endDate', params.endDate);
+        if (params.sortBy) query.append('sortBy', params.sortBy);
+        if (params.sortOrder) query.append('sortOrder', params.sortOrder);
+        if (params.salesforce) query.append('salesforce', Array.isArray(params.salesforce) ? params.salesforce.join(',') : params.salesforce);
+        if (params.tap) query.append('tap', Array.isArray(params.tap) ? params.tap.join(',') : params.tap);
+        url += `?${query.toString()}`;
+    }
+    const res = await fetch(url, { headers: getHeaders() });
+    if (!res.ok) return { data: [], total: 0, page: 1, totalPages: 1 };
+    return res.json();
+};
+
+export const getTopupSummary = async (params: { 
+    startDate?: string; 
+    endDate?: string; 
+    salesforce?: string | string[]; 
+    tap?: string | string[];
+    search?: string;
+}): Promise<any> => {
+    let url = `${API_URL}/topup/summary`;
+    const query = new URLSearchParams();
+    if (params.search) query.append('search', params.search);
+    if (params.startDate) query.append('startDate', params.startDate);
+    if (params.endDate) query.append('endDate', params.endDate);
+    if (params.salesforce) query.append('salesforce', Array.isArray(params.salesforce) ? params.salesforce.join(',') : params.salesforce);
+    if (params.tap) query.append('tap', Array.isArray(params.tap) ? params.tap.join(',') : params.tap);
+    
+    url += `?${query.toString()}`;
+
+    const res = await fetch(url, { headers: getHeaders() });
+    if (!res.ok) return null;
     return res.json();
 };
 
