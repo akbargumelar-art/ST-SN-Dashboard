@@ -351,15 +351,32 @@ app.get('/api/adisti', async (req, res) => {
         const [countResult] = await db.query(`SELECT COUNT(*) as total FROM adisti_transactions ${whereClause}`, params);
         const total = countResult[0].total;
 
+        // --- SORTING LOGIC ---
+        // Whitelist allowed columns to prevent SQL Injection
+        const allowedSorts = ['created_at', 'sn_number', 'product_name', 'salesforce_name', 'tap', 'no_rs', 'id_digipos', 'nama_outlet'];
+        const cleanSortBy = allowedSorts.includes(sortBy) ? sortBy : 'created_at';
+
+        let orderClause = `${cleanSortBy} ${sortOrder}`;
+        
+        // Handle Mixed Date Formats for Sorting
+        if (cleanSortBy === 'created_at') {
+             orderClause = `
+                CASE 
+                    WHEN created_at REGEXP '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN created_at 
+                    WHEN created_at REGEXP '^[0-9]{2}/[0-9]{2}/[0-9]{4}' THEN STR_TO_DATE(created_at, '%d/%m/%Y')
+                    ELSE created_at 
+                END ${sortOrder}
+            `;
+        }
+
         // Get Data
         const query = `
             SELECT * FROM adisti_transactions 
             ${whereClause} 
-            ORDER BY ${sortBy} ${sortOrder} 
+            ORDER BY ${orderClause} 
             LIMIT ? OFFSET ?
         `;
-        // Flatten params for the main query because of the IN clauses inside whereClause
-        // Note: mysql2 handles array parameters for IN (?) automatically if passed as a single element in params array
+        
         const [rows] = await db.query(query, [...params, limit, offset]);
 
         res.json({
@@ -460,8 +477,9 @@ app.get('/api/adisti/summary-tree', async (req, res) => {
         const params = [];
 
         if (search) {
-             whereClause += ` AND (sn_number LIKE ? OR product_name LIKE ? OR nama_outlet LIKE ?)`;
-             params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+             // ADD id_digipos to make search consistent across all views
+             whereClause += ` AND (sn_number LIKE ? OR product_name LIKE ? OR nama_outlet LIKE ? OR id_digipos LIKE ?)`;
+             params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
         }
         
         if (salesforce && salesforce !== 'all') {
@@ -558,8 +576,9 @@ app.get('/api/adisti/summary-products', async (req, res) => {
         const params = [];
 
         if (search) {
-             whereClause += ` AND (sn_number LIKE ? OR product_name LIKE ? OR nama_outlet LIKE ?)`;
-             params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+             // ADD id_digipos to make search consistent across all views
+             whereClause += ` AND (sn_number LIKE ? OR product_name LIKE ? OR nama_outlet LIKE ? OR id_digipos LIKE ?)`;
+             params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
         }
         
         if (salesforce && salesforce !== 'all') {

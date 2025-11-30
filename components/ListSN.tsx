@@ -135,6 +135,7 @@ const SummaryTreeItem: React.FC<SummaryTreeItemProps> = ({ item, level }) => {
              </div>
           </div>
           <div className="text-sm font-bold text-slate-800">
+             {/* Safety check for undefined total */}
              {(item.total || 0).toLocaleString()} <span className="text-xs font-normal text-slate-500">SN</span>
           </div>
         </div>
@@ -279,18 +280,20 @@ const ListSN: React.FC<ListSNProps> = ({ user }) => {
       }
   }, [pagination.page, pagination.limit, searchTerm, startDate, endDate, selectedSales, selectedTap, sortConfig]);
 
-  // Trigger fetch only when pagination changes AFTER initial search
+  // Trigger fetch when pagination or sorting changes AFTER initial search
   useEffect(() => {
       if (hasSearched) {
           fetchData();
       }
-  }, [pagination.page]); // Only trigger on page change, other filters require "Tampilkan" button
+  }, [pagination.page, sortConfig]); // Added sortConfig to dependency
 
   const handleSort = (key: string) => {
       setSortConfig(current => ({
           key,
           direction: current.key === key && current.direction === 'asc' ? 'desc' : 'asc'
       }));
+      // Reset to page 1 when sorting changes
+      setPagination(p => ({ ...p, page: 1 }));
   };
 
   const handleDownload = async () => {
@@ -344,12 +347,12 @@ const ListSN: React.FC<ListSNProps> = ({ user }) => {
       {/* Filters */}
       <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4 flex-shrink-0">
          <div className="lg:col-span-2 relative">
-             <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Cari SN / Produk</label>
+             <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Cari SN / Produk / Outlet</label>
              <div className="relative">
                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
                  <input 
                     type="text" 
-                    placeholder="Ketik disini..." 
+                    placeholder="SN, Produk, Outlet, atau Digipos..." 
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
                     className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-slate-300 outline-none focus:ring-2 focus:ring-purple-500"
