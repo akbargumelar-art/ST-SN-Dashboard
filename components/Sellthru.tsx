@@ -1,130 +1,310 @@
-import React, { useState } from 'react';
-import { SerialNumber, SNStatus, User, UserRole } from '../types';
-import { Search, Download, ShoppingBag, ArrowUpDown, DollarSign, Package, Store } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { User, SerialNumber } from '../types';
+import { getSellthruTransactions, getSellthruFilters, downloadSellthruReport, getSellthruSummaryTree, getSellthruProductSummary } from '../services/storage';
+import { Search, Download, ChevronLeft, ChevronRight, ArrowUpDown, Loader2, ChevronDown, ChevronUp, Package, Users, MapPin, CheckSquare, Square, ShoppingBag, Store } from 'lucide-react';
 
 interface SellthruProps {
-  data: SerialNumber[];
   user: User;
+  data: SerialNumber[]; // Kept for prop compatibility but unused (using server-side)
 }
 
 type SortConfig = {
-  key: keyof SerialNumber | 'price';
+  key: string;
   direction: 'asc' | 'desc';
 };
 
-const Sellthru: React.FC<SellthruProps> = ({ data, user }) => {
-  const [searchTerm, setSearchTerm] = useState('');
-  
-  // Filters
-  const [salesFilter, setSalesFilter] = useState('all');
-  const [tapFilter, setTapFilter] = useState('all');
-  
-  // DEFAULT DATE: TODAY
-  const [dateFilter, setDateFilter] = useState(new Date().toLocaleDateString('en-CA'));
+// --- Custom Multi-Select Dropdown Component ---
+interface MultiSelectProps {
+  options: string[];
+  selected: string[];
+  onChange: (selected: string[]) => void;
+  placeholder: string;
+  disabled?: boolean;
+}
 
-  // Sorting
+const MultiSelectDropdown: React.FC<MultiSelectProps> = ({ options, selected, onChange, placeholder, disabled }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const toggleOption = (option: string) => {
+    if (selected.includes(option)) {
+      onChange(selected.filter(item => item !== option));
+    } else {
+      onChange([...selected, option]);
+    }
+  };
+
+  const toggleAll = () => {
+    if (selected.length === options.length) {
+      onChange([]);
+    } else {
+      onChange(options);
+    }
+  };
+
+  const displayText = selected.length === 0 
+    ? placeholder 
+    : selected.length === options.length 
+      ? `Semua (${options.length})` 
+      : `${selected.length} Terpilih`;
+
+  return (
+    <div className="relative w-full" ref={dropdownRef}>
+      <button 
+        onClick={() => !disabled && setIsOpen(!isOpen)}
+        disabled={disabled}
+        className={`w-full px-3 py-2 text-sm rounded-lg border flex justify-between items-center text-left transition-colors
+          ${disabled ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed' : 'bg-white border-slate-300 text-slate-700 hover:border-emerald-500 focus:ring-2 focus:ring-emerald-500'}
+        `}
+      >
+        <span className="truncate">{displayText}</span>
+        <ChevronDown size={14} className={`text-slate-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+      </button>
+
+      {isOpen && (
+        <div className="absolute z-50 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+          <div 
+            onClick={toggleAll}
+            className="px-3 py-2 border-b border-slate-100 flex items-center gap-2 cursor-pointer hover:bg-slate-50 text-sm font-bold text-emerald-700"
+          >
+            {selected.length === options.length ? <CheckSquare size={16} /> : <Square size={16} />}
+            Pilih Semua
+          </div>
+          {options.map(option => (
+            <div 
+              key={option}
+              onClick={() => toggleOption(option)}
+              className="px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-slate-50 text-sm text-slate-700"
+            >
+              {selected.includes(option) ? <CheckSquare size={16} className="text-emerald-600" /> : <Square size={16} className="text-slate-300" />}
+              {option}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// --- Summary Tree Component (Accordion) ---
+interface SummaryTreeItemProps {
+    item: any;
+    level: number;
+}
+  
+const SummaryTreeItem: React.FC<SummaryTreeItemProps> = ({ item, level }) => {
+    const [isExpanded, setIsExpanded] = useState(false);
+    const hasChildren = item.children && item.children.length > 0;
+    
+    let Icon = MapPin;
+    let colorClass = "text-purple-600 bg-purple-100";
+    if (level === 1) { Icon = Users; colorClass = "text-blue-600 bg-blue-100"; }
+    if (level === 2) { Icon = Package; colorClass = "text-emerald-600 bg-emerald-100"; }
+  
+    return (
+      <div className="border-b border-slate-100 last:border-0">
+        <div 
+          className={`flex items-center justify-between p-3 cursor-pointer hover:bg-slate-50 transition-colors ${level > 0 ? 'bg-slate-50/50' : ''}`}
+          style={{ paddingLeft: `${level * 1.5 + 0.75}rem` }}
+          onClick={() => hasChildren && setIsExpanded(!isExpanded)}
+        >
+          <div className="flex items-center gap-3">
+             {hasChildren && (
+                 <div className={`p-1 rounded-full transition-transform ${isExpanded ? 'rotate-90 bg-slate-200' : 'bg-transparent'}`}>
+                     <ChevronRight size={14} className="text-slate-400" />
+                 </div>
+             )}
+             {!hasChildren && <div className="w-6" />}
+             
+             <div className={`p-1.5 rounded-lg ${colorClass}`}>
+                 <Icon size={16} />
+             </div>
+             <div>
+                 <p className="text-sm font-bold text-slate-700">{item.name}</p>
+             </div>
+          </div>
+          <div className="text-sm font-bold text-slate-800">
+             {(item.total || 0).toLocaleString()} <span className="text-xs font-normal text-slate-500">SN</span>
+          </div>
+        </div>
+        
+        {isExpanded && hasChildren && (
+            <div className="animate-fade-in">
+                {item.children.map((child: any, idx: number) => (
+                    <SummaryTreeItem key={`${child.name}-${idx}`} item={child} level={level + 1} />
+                ))}
+            </div>
+        )}
+      </div>
+    );
+};
+
+const Sellthru: React.FC<SellthruProps> = ({ user }) => {
+  const [transactions, setTransactions] = useState<SerialNumber[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [summaryTree, setSummaryTree] = useState<any[]>([]);
+  const [productSummary, setProductSummary] = useState<any[]>([]);
+  const [loadingSummary, setLoadingSummary] = useState(false);
+  
+  const [filterOptions, setFilterOptions] = useState<{sales: string[], taps: string[]}>({ sales: [], taps: [] });
+
+  const [pagination, setPagination] = useState({
+      page: 1,
+      limit: 50,
+      total: 0,
+      totalPages: 1
+  });
+
+  const [searchTerm, setSearchTerm] = useState('');
+  const [startDate, setStartDate] = useState(new Date().toLocaleDateString('en-CA'));
+  const [endDate, setEndDate] = useState(new Date().toLocaleDateString('en-CA'));
+  const [selectedSales, setSelectedSales] = useState<string[]>([]);
+  const [selectedTap, setSelectedTap] = useState<string[]>([]);
+  const [hasSearched, setHasSearched] = useState(false);
+  
   const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'created_at', direction: 'desc' });
 
-  // Filter accessible data
-  const accessibleData = user.role === UserRole.SALESFORCE 
-    ? data.filter(d => d.salesforce_name === user.name)
-    : data;
+  // Load Filters on Mount
+  useEffect(() => {
+    const loadFilters = async () => {
+        try {
+            const filters = await getSellthruFilters();
+            setFilterOptions(filters);
+            
+            if (user.assigned_tap) {
+                const myTaps = user.assigned_tap.split(',').map(t => t.trim());
+                setSelectedTap(myTaps);
+            }
+            if (user.assigned_salesforce) {
+                const mySales = user.assigned_salesforce.split(',').map(s => s.trim());
+                setSelectedSales(mySales);
+            }
+        } catch (error) {
+            console.error("Failed to load filters", error);
+        }
+    };
+    loadFilters();
+  }, [user]);
 
-  // Unique Dropdowns
-  const uniqueSales = Array.from(new Set(accessibleData.filter(i => i.status === SNStatus.SUKSES_ST && i.salesforce_name).map(i => i.salesforce_name))).sort();
-  const uniqueTaps = Array.from(new Set(accessibleData.filter(i => i.status === SNStatus.SUKSES_ST && i.tap).map(i => i.tap))).sort();
-  
-  // Filter only Success ST data
-  const sellthruData = accessibleData.filter(item => {
-    if (item.status !== SNStatus.SUKSES_ST) return false;
+  useEffect(() => {
+    const updateSalesOptions = async () => {
+        if (selectedTap.length > 0) {
+            const filters = await getSellthruFilters(selectedTap);
+            setFilterOptions(prev => ({ ...prev, sales: filters.sales }));
+        } else {
+             const filters = await getSellthruFilters();
+             setFilterOptions(filters);
+        }
+    };
+    updateSalesOptions();
+  }, [selectedTap]);
 
-    const matchesSearch = 
-      item.sn_number.includes(searchTerm) || 
-      (item.id_digipos && item.id_digipos.includes(searchTerm)) ||
-      (item.nama_outlet && item.nama_outlet.toLowerCase().includes(searchTerm.toLowerCase())) ||
-      item.product_name.toLowerCase().includes(searchTerm.toLowerCase());
-    
-    const matchesSales = salesFilter === 'all' || item.salesforce_name === salesFilter;
-    const matchesTap = tapFilter === 'all' || item.tap === tapFilter;
-    const matchesDate = dateFilter === '' || item.created_at.startsWith(dateFilter);
+  const fetchData = useCallback(async () => {
+      setLoading(true);
+      setLoadingSummary(true);
+      try {
+          const params = {
+              page: pagination.page,
+              limit: pagination.limit,
+              search: searchTerm,
+              startDate,
+              endDate,
+              salesforce: selectedSales,
+              tap: selectedTap,
+              sortBy: sortConfig.key,
+              sortOrder: sortConfig.direction
+          };
 
-    return matchesSearch && matchesSales && matchesTap && matchesDate;
-  });
+          const [result, treeResult, prodResult] = await Promise.all([
+              getSellthruTransactions(params),
+              getSellthruSummaryTree(params),
+              getSellthruProductSummary(params)
+          ]);
+          
+          if (result && Array.isArray(result.data)) {
+              setTransactions(result.data);
+              setPagination(prev => ({
+                  ...prev,
+                  total: result.total || 0,
+                  totalPages: result.totalPages || 1
+              }));
+          } else {
+              setTransactions([]);
+          }
 
-  // Calculate Summaries based on filtered data
-  const totalAmount = sellthruData.reduce((sum, item) => sum + (item.price || 0), 0);
-  const totalQty = sellthruData.length;
-  const uniqueOutlets = new Set(sellthruData.map(i => i.nama_outlet)).size;
+          if (Array.isArray(treeResult)) setSummaryTree(treeResult);
+          if (Array.isArray(prodResult)) setProductSummary(prodResult);
 
-  // Sorting
-  const sortedData = [...sellthruData].sort((a, b) => {
-    const aVal = a[sortConfig.key as keyof SerialNumber] ?? '';
-    const bVal = b[sortConfig.key as keyof SerialNumber] ?? '';
+          setHasSearched(true);
 
-    if (sortConfig.key === 'price') {
-       return sortConfig.direction === 'asc' 
-         ? (a.price || 0) - (b.price || 0)
-         : (b.price || 0) - (a.price || 0);
-    }
+      } catch (error) {
+          console.error("Failed to fetch Sellthru transactions", error);
+          setTransactions([]);
+      } finally {
+          setLoading(false);
+          setLoadingSummary(false);
+      }
+  }, [pagination.page, pagination.limit, searchTerm, startDate, endDate, selectedSales, selectedTap, sortConfig]);
 
-    if (typeof aVal === 'string' && typeof bVal === 'string') {
-        return sortConfig.direction === 'asc' 
-            ? aVal.localeCompare(bVal, undefined, { numeric: true, sensitivity: 'base' })
-            : bVal.localeCompare(aVal, undefined, { numeric: true, sensitivity: 'base' });
-    }
-    
-    return sortConfig.direction === 'asc'
-        ? new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-        : new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-  });
+  useEffect(() => {
+      if (hasSearched) {
+          fetchData();
+      }
+  }, [pagination.page, sortConfig]);
 
-  const requestSort = (key: keyof SerialNumber | 'price') => {
-    let direction: 'asc' | 'desc' = 'asc';
-    if (sortConfig.key === key && sortConfig.direction === 'asc') {
-      direction = 'desc';
-    }
-    setSortConfig({ key, direction });
+  const handleSort = (key: string) => {
+      setSortConfig(current => ({
+          key,
+          direction: current.key === key && current.direction === 'asc' ? 'desc' : 'asc'
+      }));
+      setPagination(p => ({ ...p, page: 1 }));
+  };
+
+  const handleDownload = async () => {
+      try {
+          await downloadSellthruReport({
+              search: searchTerm,
+              startDate,
+              endDate,
+              salesforce: selectedSales,
+              tap: selectedTap,
+              sortBy: sortConfig.key,
+              sortOrder: sortConfig.direction
+          });
+      } catch (error) {
+          alert('Gagal mendownload laporan');
+      }
+  };
+
+  const formatDisplayDate = (dateString: string) => {
+      if (!dateString) return '-';
+      if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(dateString)) return dateString;
+      const date = new Date(dateString);
+      if (isNaN(date.getTime())) return dateString;
+      return date.toLocaleDateString('id-ID', { day: '2-digit', month: '2-digit', year: 'numeric' });
   };
 
   const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(amount);
+      return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(amount || 0);
   };
 
-  const handleDownloadCSV = () => {
-    const headers = ["Tanggal Sellthru", "SN Number", "Produk", "Flag", "ID Digipos", "Nama Outlet", "Kategori", "Salesforce", "TAP", "Harga", "Transaksi ID"];
-    const rows = sortedData.map(item => [
-      new Date(item.created_at).toLocaleDateString('id-ID'),
-      `'${item.sn_number}`,
-      `"${item.product_name.replace(/"/g, '""')}"`,
-      item.flag || '-',
-      item.id_digipos || '-',
-      `"${(item.nama_outlet || '-').replace(/"/g, '""')}"`,
-      item.sub_category,
-      item.salesforce_name || '-',
-      item.tap || '-',
-      item.price || 0,
-      item.transaction_id || '-'
-    ]);
-
-    const csvContent = "data:text/csv;charset=utf-8," 
-      + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
-
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `laporan_sellthru_${new Date().toISOString().split('T')[0]}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
-
-  const SortableTh = ({ label, sortKey, className = "" }: { label: string, sortKey: keyof SerialNumber | 'price', className?: string }) => (
+  const SortableTh = ({ label, sortKey, className = "" }: { label: string, sortKey: string, className?: string }) => (
     <th 
-      className={`px-4 py-3 font-bold text-slate-900 text-xs uppercase tracking-wider cursor-pointer hover:bg-slate-100 select-none transition-colors whitespace-nowrap sticky top-0 bg-slate-50 z-10 ${className}`}
-      onClick={() => requestSort(sortKey)}
+      className={`px-4 py-3 font-bold text-slate-900 text-xs uppercase tracking-wider cursor-pointer hover:bg-slate-100 select-none transition-colors sticky top-0 bg-slate-50 z-10 ${className}`}
+      onClick={() => handleSort(sortKey)}
     >
-      <div className="flex items-center gap-1">
-        {label} <ArrowUpDown size={12} className={`ml-1 inline ${sortConfig.key === sortKey ? 'text-red-600' : 'text-slate-300'}`} />
+      <div className="flex items-center gap-1 justify-between">
+        {label} <ArrowUpDown size={12} className={`ml-1 inline ${sortConfig.key === sortKey ? 'text-emerald-600' : 'text-slate-300'}`} />
       </div>
     </th>
   );
@@ -133,160 +313,200 @@ const Sellthru: React.FC<SellthruProps> = ({ data, user }) => {
     <div className="space-y-6 animate-fade-in h-full flex flex-col">
       <div className="flex flex-col md:flex-row justify-between items-end gap-4 border-b border-slate-200 pb-4 flex-shrink-0">
         <div>
-          <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
-            <ShoppingBag className="text-emerald-600" />
-            Laporan Sellthru
-          </h2>
-          <p className="text-slate-500">Data transaksi sukses (Sukses ST)</p>
-        </div>
-        <button 
-          onClick={handleDownloadCSV}
-          disabled={sortedData.length === 0}
-          className="flex items-center space-x-2 bg-emerald-600 text-white px-4 py-2 rounded-lg hover:bg-emerald-700 transition-colors text-sm font-medium shadow-sm disabled:opacity-50"
-        >
-          <Download size={16} />
-          <span>Unduh Laporan</span>
-        </button>
-      </div>
-
-      {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 flex-shrink-0">
-        <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex items-center space-x-4">
-          <div className="p-3 rounded-lg bg-emerald-100 text-emerald-600">
-            <DollarSign size={24} />
-          </div>
-          <div>
-            <p className="text-xs text-slate-500 font-bold uppercase">Total Nilai</p>
-            <h3 className="text-lg font-bold text-slate-800">{formatCurrency(totalAmount)}</h3>
-          </div>
-        </div>
-        <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex items-center space-x-4">
-          <div className="p-3 rounded-lg bg-blue-100 text-blue-600">
-            <Package size={24} />
-          </div>
-          <div>
-            <p className="text-xs text-slate-500 font-bold uppercase">Total Unit</p>
-            <h3 className="text-lg font-bold text-slate-800">{totalQty} Pcs</h3>
-          </div>
-        </div>
-        <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex items-center space-x-4">
-          <div className="p-3 rounded-lg bg-purple-100 text-purple-600">
-            <Store size={24} />
-          </div>
-          <div>
-            <p className="text-xs text-slate-500 font-bold uppercase">Outlet Aktif</p>
-            <h3 className="text-lg font-bold text-slate-800">{uniqueOutlets}</h3>
-          </div>
+          <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2"><Store className="text-emerald-600"/> Laporan Sellthru</h2>
+          <p className="text-slate-500">Data Transaksi Sukses ST</p>
         </div>
       </div>
 
-      {/* Filter Section */}
-      <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 flex-shrink-0">
-        <div className="relative">
-            <span className="text-xs font-bold text-black mb-1 block">Cari Data</span>
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-              <input
-                type="text"
-                placeholder="SN / Digipos / Outlet..."
-                className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white text-black"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-              />
+      {/* Filters */}
+      <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4 flex-shrink-0">
+         <div className="lg:col-span-2 relative">
+             <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Cari Data</label>
+             <div className="relative">
+                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                 <input 
+                    type="text" 
+                    placeholder="SN, Outlet, Digipos, atau Produk..." 
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-slate-300 outline-none focus:ring-2 focus:ring-emerald-500"
+                 />
+             </div>
+         </div>
+         
+         <div>
+             <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Dari Tanggal</label>
+             <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 outline-none focus:ring-2 focus:ring-emerald-500" />
+         </div>
+
+         <div>
+             <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Sampai</label>
+             <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 outline-none focus:ring-2 focus:ring-emerald-500" />
+         </div>
+
+         <div>
+             <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Tap Area</label>
+             <MultiSelectDropdown 
+                options={filterOptions.taps} 
+                selected={selectedTap} 
+                onChange={setSelectedTap} 
+                placeholder="Semua TAP"
+                disabled={!!user.assigned_tap}
+             />
+         </div>
+
+         <div>
+             <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Salesforce</label>
+             <MultiSelectDropdown 
+                options={filterOptions.sales} 
+                selected={selectedSales} 
+                onChange={setSelectedSales} 
+                placeholder="Semua Sales"
+                disabled={!!user.assigned_salesforce}
+             />
+         </div>
+      </div>
+
+      <div className="flex gap-2">
+         <button 
+            onClick={() => { setPagination(p => ({...p, page: 1})); fetchData(); }} 
+            className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 rounded-lg shadow-md transition-all flex justify-center items-center gap-2"
+         >
+            <Search size={18} /> Tampilkan Data
+         </button>
+         {hasSearched && (
+             <button 
+                onClick={handleDownload}
+                className="bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 font-bold py-2 px-4 rounded-lg shadow-sm transition-all flex justify-center items-center gap-2"
+             >
+                <Download size={18} /> Export CSV
+             </button>
+         )}
+      </div>
+
+      {/* Product Summary */}
+      {hasSearched && (
+        <div className="flex-shrink-0">
+             <div className="bg-slate-50 px-4 py-2 border-b border-slate-200 border-t rounded-t-xl flex justify-between items-center">
+                <h3 className="font-bold text-slate-700 text-sm flex items-center gap-2"><ShoppingBag size={16}/> Summary Produk</h3>
+                <span className="text-xs text-slate-500">Total SN per Produk</span>
+            </div>
+            <div className="bg-white p-4 rounded-b-xl shadow-sm border border-slate-200 border-t-0 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3 max-h-40 overflow-y-auto">
+                {productSummary.map((prod, idx) => (
+                    <div key={idx} className="bg-slate-50 p-2 rounded-lg border border-slate-100 hover:border-emerald-200 transition-colors">
+                        <p className="text-[10px] text-slate-500 uppercase font-bold truncate" title={prod.product_name}>{prod.product_name}</p>
+                        <p className="text-lg font-bold text-emerald-700">{prod.total.toLocaleString()}</p>
+                    </div>
+                ))}
+                {productSummary.length === 0 && <p className="text-sm text-slate-400 col-span-full text-center">Tidak ada data.</p>}
             </div>
         </div>
+      )}
 
-        <div>
-          <span className="text-xs font-bold text-black mb-1 block">Tanggal</span>
-          <input
-            type="date"
-            className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white text-black font-medium"
-            style={{ colorScheme: 'light' }}
-            value={dateFilter}
-            onChange={(e) => setDateFilter(e.target.value)}
-          />
+      {/* Summary Tree */}
+      {hasSearched && (
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex-shrink-0">
+            <div className="bg-slate-50 px-4 py-3 border-b border-slate-200 flex justify-between items-center">
+                <h3 className="font-bold text-slate-700 text-sm">Summary Kontribusi (Hierarchy)</h3>
+                <span className="text-xs text-slate-500">Tap &gt; Sales &gt; Produk</span>
+            </div>
+            <div className="max-h-64 overflow-y-auto">
+                {loadingSummary ? (
+                    <div className="p-8 text-center"><Loader2 className="animate-spin mx-auto text-emerald-600"/></div>
+                ) : summaryTree.length === 0 ? (
+                    <div className="p-4 text-center text-sm text-slate-500">Tidak ada data summary.</div>
+                ) : (
+                    summaryTree.map((tap, idx) => (
+                        <SummaryTreeItem key={`${tap.name}-${idx}`} item={tap} level={0} />
+                    ))
+                )}
+            </div>
         </div>
+      )}
 
-        {(user.role === UserRole.ADMIN || user.role === UserRole.SUPERVISOR || user.role === UserRole.SUPER_ADMIN) && (
-            <div>
-                <span className="text-xs font-bold text-black mb-1 block">Salesforce</span>
-                <select
-                    className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white text-black font-medium"
-                    value={salesFilter}
-                    onChange={(e) => setSalesFilter(e.target.value)}
-                >
-                    <option value="all">Semua Sales</option>
-                    {uniqueSales.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
+      {/* Table Section */}
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex-1 flex flex-col min-h-0 relative">
+        {loading && (
+            <div className="absolute inset-0 bg-white/60 z-30 flex items-center justify-center backdrop-blur-[1px]">
+                <Loader2 className="animate-spin text-emerald-600" size={32} />
             </div>
         )}
+        
+        {!hasSearched ? (
+            <div className="flex-1 flex flex-col items-center justify-center text-slate-400 p-8">
+                <Search size={48} className="mb-4 opacity-20" />
+                <p className="font-bold text-lg">Menunggu Filter</p>
+                <p className="text-sm">Silakan pilih filter tanggal/area lalu klik "Tampilkan Data"</p>
+            </div>
+        ) : (
+            <>
+                <div className="overflow-y-auto flex-1">
+                <table className="w-full text-left border-collapse">
+                    <thead className="bg-slate-50 border-b border-slate-200 sticky top-0 z-20">
+                    <tr>
+                        <SortableTh label="TGL SELLTHRU" sortKey="sellthru_date" />
+                        <SortableTh label="SN NUMBER" sortKey="sn_number" />
+                        <SortableTh label="PRODUK" sortKey="product_name" />
+                        <SortableTh label="FLAG" sortKey="flag" />
+                        <SortableTh label="ID DIGIPOS" sortKey="id_digipos" />
+                        <SortableTh label="OUTLET" sortKey="nama_outlet" />
+                        <SortableTh label="SALESFORCE" sortKey="salesforce_name" />
+                        <SortableTh label="TAP" sortKey="tap" />
+                        <SortableTh label="HARGA" sortKey="price" className="text-right" />
+                        <SortableTh label="TRX ID" sortKey="transaction_id" className="text-right" />
+                    </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                    {transactions.length > 0 ? (
+                        transactions.map((item, idx) => (
+                            <tr key={item.id || idx} className="hover:bg-emerald-50/30 transition-colors">
+                            <td className="px-4 py-3 text-sm text-slate-600 whitespace-nowrap">{formatDisplayDate(item.sellthru_date || item.created_at)}</td>
+                            <td className="px-4 py-3 font-mono text-sm font-bold text-slate-800">{item.sn_number}</td>
+                            <td className="px-4 py-3 text-sm text-slate-700 max-w-[180px] truncate" title={item.product_name}>{item.product_name}</td>
+                            <td className="px-4 py-3 text-sm"><span className="px-2 py-0.5 bg-slate-100 border rounded text-xs text-slate-600">{item.flag || '-'}</span></td>
+                            <td className="px-4 py-3 text-sm font-mono text-emerald-700">{item.id_digipos || '-'}</td>
+                            <td className="px-4 py-3 text-sm text-slate-600 truncate max-w-[150px]" title={item.nama_outlet}>{item.nama_outlet || '-'}</td>
+                            <td className="px-4 py-3 text-sm text-slate-600">{item.salesforce_name}</td>
+                            <td className="px-4 py-3 text-sm text-slate-500">{item.tap}</td>
+                            <td className="px-4 py-3 text-sm font-bold text-slate-800 text-right">{item.price ? formatCurrency(item.price) : '-'}</td>
+                            <td className="px-4 py-3 text-sm font-mono text-slate-500 text-right">{item.transaction_id || '-'}</td>
+                            </tr>
+                        ))
+                    ) : (
+                        <tr>
+                            <td colSpan={10} className="px-6 py-12 text-center text-slate-400">
+                                Tidak ada data Sellthru ditemukan.
+                            </td>
+                        </tr>
+                    )}
+                    </tbody>
+                </table>
+                </div>
 
-        <div>
-            <span className="text-xs font-bold text-black mb-1 block">TAP</span>
-            <select
-                className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white text-black font-medium"
-                value={tapFilter}
-                onChange={(e) => setTapFilter(e.target.value)}
-            >
-                <option value="all">Semua TAP</option>
-                {uniqueTaps.map(t => <option key={t} value={t}>{t}</option>)}
-            </select>
-        </div>
-      </div>
-
-      {/* Table - Fixed Height Container */}
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex-1 flex flex-col min-h-0">
-        <div className="overflow-y-auto flex-1">
-          <table className="w-full text-left border-collapse">
-            <thead className="bg-slate-50 border-b border-slate-200 sticky top-0 z-20 shadow-sm">
-              <tr>
-                <SortableTh label="Tanggal" sortKey="created_at" />
-                <SortableTh label="SN Number" sortKey="sn_number" />
-                <SortableTh label="Produk" sortKey="product_name" />
-                <SortableTh label="Flag" sortKey="flag" />
-                <SortableTh label="ID Digipos" sortKey="id_digipos" />
-                <SortableTh label="Nama Outlet" sortKey="nama_outlet" />
-                <SortableTh label="Kategori" sortKey="sub_category" />
-                <SortableTh label="Salesforce" sortKey="salesforce_name" />
-                <SortableTh label="TAP" sortKey="tap" />
-                <SortableTh label="Harga" sortKey="price" className="text-right" />
-                <SortableTh label="Transaksi ID" sortKey="transaction_id" />
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {sortedData.map((item) => (
-                <tr key={item.id} className="hover:bg-emerald-50/30 transition-colors">
-                  <td className="px-4 py-3 text-sm text-slate-600 whitespace-nowrap">
-                    {new Date(item.created_at).toLocaleDateString('id-ID', { day: '2-digit', month: '2-digit', year: 'numeric' })}
-                  </td>
-                  <td className="px-4 py-3 font-mono text-sm font-bold text-slate-800">{item.sn_number}</td>
-                  <td className="px-4 py-3 text-sm text-slate-800 font-medium truncate max-w-[150px]" title={item.product_name}>{item.product_name}</td>
-                  <td className="px-4 py-3 text-sm text-slate-700">
-                    <span className="px-2 py-1 bg-slate-100 rounded-md text-xs border border-slate-200 whitespace-nowrap">{item.flag || '-'}</span>
-                  </td>
-                  <td className="px-4 py-3 text-sm font-semibold text-emerald-700 bg-emerald-50/50 rounded-sm">{item.id_digipos || '-'}</td>
-                  <td className="px-4 py-3 text-sm text-slate-700 font-medium">{item.nama_outlet || '-'}</td>
-                  <td className="px-4 py-3 text-sm text-slate-500">{item.sub_category}</td>
-                  <td className="px-4 py-3 text-sm text-slate-500">{item.salesforce_name}</td>
-                  <td className="px-4 py-3 text-sm text-slate-500">{item.tap || '-'}</td>
-                  <td className="px-4 py-3 text-sm font-bold text-slate-800 text-right">
-                    {item.price ? formatCurrency(item.price) : '-'}
-                  </td>
-                  <td className="px-4 py-3 text-sm font-mono text-slate-500 text-right">
-                    {item.transaction_id || '-'}
-                  </td>
-                </tr>
-              ))}
-              {sortedData.length === 0 && (
-                <tr>
-                  <td colSpan={11} className="px-6 py-12 text-center text-slate-400">
-                    Belum ada data penjualan (Sellthru) ditemukan.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+                {/* Pagination */}
+                <div className="bg-slate-50 border-t border-slate-200 p-3 flex items-center justify-between">
+                    <div className="text-xs text-slate-500">
+                        Halaman <strong>{pagination.page}</strong> dari <strong>{pagination.totalPages}</strong> (Total: {pagination.total} Data)
+                    </div>
+                    <div className="flex gap-2">
+                        <button 
+                            disabled={pagination.page <= 1 || loading}
+                            onClick={() => setPagination(p => ({...p, page: p.page - 1}))}
+                            className="p-1.5 rounded-md border border-slate-300 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-50"
+                        >
+                            <ChevronLeft size={16} />
+                        </button>
+                        <button 
+                            disabled={pagination.page >= pagination.totalPages || loading}
+                            onClick={() => setPagination(p => ({...p, page: p.page + 1}))}
+                            className="p-1.5 rounded-md border border-slate-300 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-50"
+                        >
+                            <ChevronRight size={16} />
+                        </button>
+                    </div>
+                </div>
+            </>
+        )}
       </div>
     </div>
   );

@@ -40,6 +40,7 @@ export interface SerialNumber {
   no_rs?: string;
   id_digipos?: string;
   nama_outlet?: string;
+  sellthru_date?: string; // New field
 }
 
 export interface AdistiTransaction {

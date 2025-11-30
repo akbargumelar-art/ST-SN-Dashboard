@@ -41,8 +41,8 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess, setIsGlobalProcessing 
       example = "123456789012;HVC;Kartu Sakti 10GB;Voucher Fisik;Gudang Jakarta;CVS KNG 05;TAP Pasar Baru;RS-99901";
       filename = "template_db_report_sn.csv";
     } else if (uploadMode === 'update') {
-      headers = "sn_number;id_digipos;nama_outlet;price;transaction_id";
-      example = "123456789012;DG-10001;Outlet Berkah Jaya;25000;TRX-ABC1234\n987654321098;DG-10002;Cellular Maju;50000;TRX-XYZ9876";
+      headers = "sn_number;sellthru_date;id_digipos;nama_outlet;price;transaction_id";
+      example = "123456789012;2025-11-27;DG-10001;Outlet Berkah Jaya;25000;TRX-ABC1234\n987654321098;2025-11-27;DG-10002;Cellular Maju;50000;TRX-XYZ9876";
       filename = "template_db_sellthru.csv";
     } else if (uploadMode === 'topup') {
       headers = "transaction_date;sender;receiver;transaction_type;amount;currency;remarks;salesforce;tap;id_digipos;nama_outlet";
@@ -117,19 +117,33 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess, setIsGlobalProcessing 
 
   // --- CHUNKED UPLOAD LOGIC ---
   const uploadInChunks = async (data: any[], apiFunction: (chunk: any[]) => Promise<any>) => {
-      const CHUNK_SIZE = 2000;
+      const CHUNK_SIZE = 500; // Smaller chunk for safety
       const total = data.length;
       setTotalCount(total);
       
       for (let i = 0; i < total; i += CHUNK_SIZE) {
           const chunk = data.slice(i, i + CHUNK_SIZE);
-          await apiFunction(chunk);
+          
+          let attempts = 0;
+          let success = false;
+          while(attempts < 3 && !success) {
+            try {
+                await apiFunction(chunk);
+                success = true;
+            } catch (err) {
+                attempts++;
+                addLog(`Gagal mengirim chunk ${i}-${i+chunk.length}. Retry ${attempts}...`);
+                await new Promise(r => setTimeout(r, 2000)); // Retry delay
+            }
+          }
+
+          if (!success) throw new Error("Gagal mengupload sebagian data setelah 3x percobaan.");
           
           const currentProcessed = Math.min(i + CHUNK_SIZE, total);
           setProcessedCount(currentProcessed);
           setUploadProgress(Math.round((currentProcessed / total) * 100));
           
-          await new Promise(resolve => setTimeout(resolve, 50));
+          await new Promise(resolve => setTimeout(resolve, 500)); // Breathe
       }
   };
 
@@ -167,6 +181,29 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess, setIsGlobalProcessing 
         let finalParsedItems: any[] = [];
         let usedDelimiter = '';
         let headerRow: string[] = [];
+
+        // --- BLIND FALLBACK MODE ---
+        // Jika deteksi header gagal total, kita coba paksa baca berdasarkan urutan kolom (Blind Mode)
+        const tryBlindParse = (delimiter: string, mode: string) => {
+            addLog(`Mencoba Blind Mode dengan pemisah '${delimiter}'...`);
+            const items = [];
+            for(let i=1; i<lines.length; i++) {
+                const parts = parseCSVLine(lines[i], delimiter);
+                if (parts.length < 2) continue;
+                
+                if (mode === 'adisti') {
+                    // Fallback Order: Date, SN, Warehouse, Product, SF, RS, Digipos, Outlet, Tap
+                    if(parts[1] && parts[1].length > 5) {
+                        items.push({
+                            created_at: parts[0], sn_number: parts[1], warehouse: parts[2] || '-', product_name: parts[3] || '-',
+                            salesforce_name: parts[4] || '-', no_rs: parts[5] || '-', id_digipos: parts[6] || '-',
+                            nama_outlet: parts[7] || '-', tap: parts[8] || '-'
+                        });
+                    }
+                }
+            }
+            return items;
+        };
 
         for (const delimiter of delimitersToTry) {
             const currentHeader = parseCSVLine(lines[0], delimiter).map(h => h.toLowerCase().trim().replace(/_/g, '')); 
@@ -220,12 +257,13 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess, setIsGlobalProcessing 
             }
             else if (uploadMode === 'update') {
                 snIdx = findIdx(['snnumber', 'nosn', 'sn']);
+                dateIdx = findIdx(['sellthrudate', 'tanggal', 'date']);
                 digiIdx = findIdx(['iddigipos', 'digipos']);
                 outletIdx = findIdx(['namaoutlet', 'outlet']);
                 amountIdx = findIdx(['price', 'harga', 'amount']);
                 trxIdIdx = findIdx(['transactionid', 'trxid']);
                 
-                if (snIdx === -1) { snIdx=0; digiIdx=1; outletIdx=2; amountIdx=3; trxIdIdx=4; }
+                if (snIdx === -1) { snIdx=0; dateIdx=1; digiIdx=2; outletIdx=3; amountIdx=4; trxIdIdx=5; }
             }
             else { 
                 dateIdx = findIdx(['transactiondate', 'tanggal', 'date']);
@@ -287,6 +325,7 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess, setIsGlobalProcessing 
                         const priceStr = getVal(parts, amountIdx).replace(/[^0-9]/g, '');
                         tempItems.push({
                             sn_number: snRaw,
+                            sellthru_date: getVal(parts, dateIdx) || new Date().toISOString().split('T')[0],
                             id_digipos: getVal(parts, digiIdx),
                             nama_outlet: getVal(parts, outletIdx),
                             price: priceStr ? parseInt(priceStr) : 0,
@@ -320,6 +359,16 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess, setIsGlobalProcessing 
                 headerRow = rawHeader;
                 addLog(`SUKSES: Ditemukan ${tempItems.length} baris data valid menggunakan pemisah '${delimiter}'`);
                 break; 
+            }
+        }
+
+        // --- RETRY WITH BLIND MODE IF FAILED ---
+        if (finalParsedItems.length === 0 && uploadMode === 'adisti') {
+            finalParsedItems = tryBlindParse(';', 'adisti');
+            if (finalParsedItems.length > 0) addLog("Blind Parse (;) berhasil.");
+            else {
+                finalParsedItems = tryBlindParse(',', 'adisti');
+                 if (finalParsedItems.length > 0) addLog("Blind Parse (,) berhasil.");
             }
         }
 
