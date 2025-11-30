@@ -42,13 +42,13 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess, setIsGlobalProcessing 
       example = "123456789012;HVC;Kartu Sakti 10GB;Voucher Fisik;Gudang Jakarta;CVS KNG 05;TAP Pasar Baru;RS-99901";
       filename = "template_db_report_sn.csv";
     } else if (uploadMode === 'update') {
-      // UPDATED TEMPLATE: Added Product, Salesforce, Tap
       headers = "sn_number;sellthru_date;id_digipos;nama_outlet;price;transaction_id;product_name;salesforce_name;tap";
       example = "123456789012;2025-11-27;DG-10001;Outlet Berkah;25000;TRX-1;Voucher 10GB;Agus Sarwoedi;Tap Palimanan\n987654321098;2025-11-27;DG-10002;Cellular Maju;50000;TRX-2;Voucher 2.5GB;Budi Santoso;Tap Kota";
       filename = "template_db_sellthru.csv";
     } else if (uploadMode === 'topup') {
-      headers = "transaction_id;transaction_date;sender;receiver;transaction_type;amount;currency;remarks;salesforce;tap;id_digipos;nama_outlet";
-      example = "TRX-TOPUP-001;2025-11-26 14:59:46;6282114115293;82118776787;Debit;210000;IDR;Top Up balance via SF;Ahmad Gunawan;Pemuda;2100005480;MAJU JAYA";
+      // REMOVED transaction_id
+      headers = "transaction_date;sender;receiver;transaction_type;amount;currency;remarks;salesforce;tap;id_digipos;nama_outlet";
+      example = "2025-11-26 14:59:46;6282114115293;82118776787;Debit;210000;IDR;Top Up balance via SF;Ahmad Gunawan;Pemuda;2100005480;MAJU JAYA";
       filename = "template_db_topup_saldo.csv";
     } else if (uploadMode === 'bucket') {
       headers = "transaction_id;transaction_date;sender;receiver;transaction_type;amount;currency;remarks;salesforce;tap;id_digipos;nama_outlet";
@@ -85,7 +85,6 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess, setIsGlobalProcessing 
 
   const cleanStr = (str: string) => {
       if (!str) return '';
-      // Remove leading single quote often found in Excel exports, then trim quotes and whitespace
       return str.replace(/^'/, '').replace(/^"|"$/g, '').replace(/^'|'$/g, '').trim();
   };
 
@@ -118,9 +117,8 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess, setIsGlobalProcessing 
       console.log(msg);
   };
 
-  // --- CHUNKED UPLOAD LOGIC ---
   const uploadInChunks = async (data: any[], apiFunction: (chunk: any[]) => Promise<any>) => {
-      const CHUNK_SIZE = 500; // Smaller chunk for safety
+      const CHUNK_SIZE = 500;
       const total = data.length;
       setTotalCount(total);
       
@@ -136,7 +134,7 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess, setIsGlobalProcessing 
             } catch (err) {
                 attempts++;
                 addLog(`Gagal mengirim chunk ${i}-${i+chunk.length}. Retry ${attempts}...`);
-                await new Promise(r => setTimeout(r, 2000)); // Retry delay
+                await new Promise(r => setTimeout(r, 2000));
             }
           }
 
@@ -146,7 +144,7 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess, setIsGlobalProcessing 
           setProcessedCount(currentProcessed);
           setUploadProgress(Math.round((currentProcessed / total) * 100));
           
-          await new Promise(resolve => setTimeout(resolve, 500)); // Breathe
+          await new Promise(resolve => setTimeout(resolve, 500));
       }
   };
 
@@ -156,13 +154,13 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess, setIsGlobalProcessing 
     setSuccessMsg('');
     setDebugLog([]);
     setIsProcessing(true);
-    setIsGlobalProcessing(true); // LOCK UI
+    setIsGlobalProcessing(true);
     setUploadProgress(0);
 
     if (!file) {
       setError('Silakan pilih file CSV terlebih dahulu.');
       setIsProcessing(false);
-      setIsGlobalProcessing(false); // UNLOCK
+      setIsGlobalProcessing(false);
       return;
     }
 
@@ -186,7 +184,6 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess, setIsGlobalProcessing 
         let headerRow: string[] = [];
 
         // --- BLIND FALLBACK MODE ---
-        // Jika deteksi header gagal total, kita coba paksa baca berdasarkan urutan kolom (Blind Mode)
         const tryBlindParse = (delimiter: string, mode: string) => {
             addLog(`Mencoba Blind Mode dengan pemisah '${delimiter}'...`);
             const items = [];
@@ -195,7 +192,6 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess, setIsGlobalProcessing 
                 if (parts.length < 2) continue;
                 
                 if (mode === 'adisti') {
-                    // Fallback Order: Date, SN, Warehouse, Product, SF, RS, Digipos, Outlet, Tap
                     if(parts[1] && parts[1].length > 5) {
                         items.push({
                             created_at: parts[0], sn_number: parts[1], warehouse: parts[2] || '-', product_name: parts[3] || '-',
@@ -204,7 +200,6 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess, setIsGlobalProcessing 
                         });
                     }
                 } else if (mode === 'update') {
-                     // Fallback Order: SN, Date, Digi, Outlet, Price, TrxID, Prod, SF, Tap
                      if (parts[0]) {
                         const priceStr = parts[4] ? parts[4].replace(/[^0-9]/g, '') : '0';
                         items.push({
@@ -281,20 +276,17 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess, setIsGlobalProcessing 
                 outletIdx = findIdx(['namaoutlet', 'outlet']);
                 amountIdx = findIdx(['price', 'harga', 'amount']);
                 trxIdIdx = findIdx(['transactionid', 'trxid']);
-                
-                // NEW COLUMNS for Sellthru
                 prodIdx = findIdx(['productname', 'product', 'produk']);
                 sfIdx = findIdx(['salesforcename', 'salesforce', 'sf']);
                 tapIdx = findIdx(['tap']);
                 
                 if (snIdx === -1) { 
                     snIdx=0; dateIdx=1; digiIdx=2; outletIdx=3; amountIdx=4; trxIdIdx=5; 
-                    // Assume additional cols are appended
                     prodIdx=6; sfIdx=7; tapIdx=8;
                 }
             }
-            else { 
-                // Topup & Bucket
+            else if (uploadMode === 'bucket') {
+                // BUCKET still needs Transaction ID
                 trxIdIdx = findIdx(['transactionid', 'trxid', 'id']);
                 dateIdx = findIdx(['transactiondate', 'tanggal', 'date']);
                 senderIdx = findIdx(['sender', 'pengirim']);
@@ -308,10 +300,27 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess, setIsGlobalProcessing 
                 digiIdx = findIdx(['iddigipos', 'digipos']);
                 outletIdx = findIdx(['namaoutlet', 'outlet']);
                 
-                // Fallback default index if headers not found for topup/bucket
                 if (amountIdx === -1) { 
                     trxIdIdx = 0; dateIdx=1; senderIdx=2; receiverIdx=3; trxTypeIdx=4; amountIdx=5;
                     currencyIdx=6; remarksIdx=7; sfIdx=8; tapIdx=9; digiIdx=10; outletIdx=11;
+                } 
+            } else if (uploadMode === 'topup') {
+                // TOPUP - NO Transaction ID
+                dateIdx = findIdx(['transactiondate', 'tanggal', 'date']);
+                senderIdx = findIdx(['sender', 'pengirim']);
+                receiverIdx = findIdx(['receiver', 'penerima']);
+                trxTypeIdx = findIdx(['transactiontype', 'type', 'tipe']);
+                amountIdx = findIdx(['amount', 'jumlah']);
+                currencyIdx = findIdx(['currency']);
+                remarksIdx = findIdx(['remarks', 'ket']);
+                sfIdx = findIdx(['salesforce']);
+                tapIdx = findIdx(['tap']);
+                digiIdx = findIdx(['iddigipos', 'digipos']);
+                outletIdx = findIdx(['namaoutlet', 'outlet']);
+                
+                if (amountIdx === -1) { 
+                    dateIdx=0; senderIdx=1; receiverIdx=2; trxTypeIdx=3; amountIdx=4;
+                    currencyIdx=5; remarksIdx=6; sfIdx=7; tapIdx=8; digiIdx=9; outletIdx=10;
                 } 
             }
 
@@ -370,12 +379,29 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess, setIsGlobalProcessing 
                         });
                     }
                 }
-                else { 
-                     // Topup & Bucket
+                else if (uploadMode === 'bucket') { 
                      const amtStr = getVal(parts, amountIdx).replace(/[^0-9]/g, '');
                      if (amtStr) {
                         tempItems.push({
                             transaction_id: getVal(parts, trxIdIdx),
+                            transaction_date: getVal(parts, dateIdx) || getVal(parts, 0),
+                            sender: getVal(parts, senderIdx),
+                            receiver: getVal(parts, receiverIdx),
+                            transaction_type: getVal(parts, trxTypeIdx),
+                            amount: amtStr ? parseInt(amtStr) : 0,
+                            currency: getVal(parts, currencyIdx) || 'IDR',
+                            remarks: getVal(parts, remarksIdx),
+                            salesforce: getVal(parts, sfIdx),
+                            tap: getVal(parts, tapIdx),
+                            id_digipos: getVal(parts, digiIdx),
+                            nama_outlet: getVal(parts, outletIdx)
+                        });
+                     }
+                } else if (uploadMode === 'topup') {
+                     // Topup - No Trx ID
+                     const amtStr = getVal(parts, amountIdx).replace(/[^0-9]/g, '');
+                     if (amtStr) {
+                        tempItems.push({
                             transaction_date: getVal(parts, dateIdx) || getVal(parts, 0),
                             sender: getVal(parts, senderIdx),
                             receiver: getVal(parts, receiverIdx),
@@ -432,7 +458,6 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess, setIsGlobalProcessing 
             await uploadInChunks(finalParsedItems, bulkAddSerialNumbers);
             setSuccessMsg(`SUKSES TOTAL: ${count} Data Report SN berhasil tersimpan di Database.`);
         } else if (uploadMode === 'update') {
-            // Using new architecture function
             await uploadInChunks(finalParsedItems, bulkAddSellthruTransactions);
             setSuccessMsg(`SUKSES TOTAL: ${count} Data Sellthru berhasil diproses (Arsitektur Baru).`);
         } else if (uploadMode === 'topup') {
@@ -461,7 +486,7 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess, setIsGlobalProcessing 
         setShowDebug(true);
       } finally {
         setIsProcessing(false);
-        setIsGlobalProcessing(false); // UNLOCK UI
+        setIsGlobalProcessing(false);
       }
     };
 

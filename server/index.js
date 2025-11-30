@@ -628,8 +628,9 @@ app.get('/api/topup', authenticateToken, async (req, res) => {
         const params = [];
 
         if (search) {
-            whereClause += ` AND (transaction_id LIKE ? OR salesforce LIKE ? OR remarks LIKE ?)`;
-            params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+            // REMOVED transaction_id search
+            whereClause += ` AND (salesforce LIKE ? OR remarks LIKE ?)`;
+            params.push(`%${search}%`, `%${search}%`);
         }
         if (salesforce && salesforce !== 'all') {
              const sfArray = salesforce.split(',').map(s => s.trim());
@@ -670,8 +671,9 @@ app.get('/api/topup/summary', authenticateToken, async (req, res) => {
         const params = [];
 
         if (search) {
-             whereClause += ` AND (transaction_id LIKE ? OR salesforce LIKE ? OR remarks LIKE ?)`;
-             params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+             // REMOVED transaction_id search
+             whereClause += ` AND (salesforce LIKE ? OR remarks LIKE ?)`;
+             params.push(`%${search}%`, `%${search}%`);
         }
         if (startDate) { whereClause += ` AND transaction_date >= ?`; params.push(startDate); }
         if (endDate) { whereClause += ` AND transaction_date <= ?`; params.push(endDate); }
@@ -708,17 +710,13 @@ app.get('/api/topup/summary', authenticateToken, async (req, res) => {
 app.post('/api/topup/bulk', authenticateToken, async (req, res) => {
     const items = req.body;
     try {
+        // REMOVED transaction_id from INSERT query
         const query = `
             INSERT INTO topup_transactions 
-            (transaction_id, transaction_date, sender, receiver, transaction_type, amount, currency, remarks, salesforce, tap, id_digipos, nama_outlet) 
+            (transaction_date, sender, receiver, transaction_type, amount, currency, remarks, salesforce, tap, id_digipos, nama_outlet) 
             VALUES ?
-            ON DUPLICATE KEY UPDATE
-            transaction_date=VALUES(transaction_date), sender=VALUES(sender), receiver=VALUES(receiver),
-            transaction_type=VALUES(transaction_type), amount=VALUES(amount), currency=VALUES(currency),
-            remarks=VALUES(remarks), salesforce=VALUES(salesforce), tap=VALUES(tap), 
-            id_digipos=VALUES(id_digipos), nama_outlet=VALUES(nama_outlet)
         `;
-        const values = items.map(i => [i.transaction_id, i.transaction_date, i.sender, i.receiver, i.transaction_type, i.amount, i.currency, i.remarks, i.salesforce, i.tap, i.id_digipos, i.nama_outlet]);
+        const values = items.map(i => [i.transaction_date, i.sender, i.receiver, i.transaction_type, i.amount, i.currency, i.remarks, i.salesforce, i.tap, i.id_digipos, i.nama_outlet]);
         await db.query(query, [values]);
         res.json({ message: 'Topup uploaded' });
     } catch (err) { res.status(500).json({ error: err.message }); }

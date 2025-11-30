@@ -224,7 +224,7 @@ const TopupSaldo: React.FC<TopupSaldoProps> = ({ user }) => {
                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
                  <input 
                     type="text" 
-                    placeholder="Trx ID, Salesforce, atau Remarks..." 
+                    placeholder="Salesforce, Remarks..." 
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
                     className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-slate-300 outline-none focus:ring-2 focus:ring-blue-500"
@@ -312,7 +312,6 @@ const TopupSaldo: React.FC<TopupSaldoProps> = ({ user }) => {
                 <table className="w-full text-left">
                     <thead className="bg-slate-50 border-b border-slate-200 sticky top-0 z-20">
                     <tr>
-                        <SortableTh label="TRX ID" sortKey="transaction_id" />
                         <SortableTh label="TANGGAL" sortKey="transaction_date" />
                         <SortableTh label="SALESFORCE" sortKey="salesforce" />
                         <SortableTh label="TAP" sortKey="tap" />
@@ -324,7 +323,6 @@ const TopupSaldo: React.FC<TopupSaldoProps> = ({ user }) => {
                     {data.length > 0 ? (
                         data.map(item => (
                             <tr key={item.id} className="hover:bg-blue-50/30 text-sm">
-                            <td className="px-4 py-3 font-mono text-slate-500">{item.transaction_id || '-'}</td>
                             <td className="px-4 py-3 whitespace-nowrap">{item.transaction_date}</td>
                             <td className="px-4 py-3 font-medium text-slate-700">{item.salesforce}</td>
                             <td className="px-4 py-3 text-slate-500">{item.tap}</td>
@@ -333,7 +331,7 @@ const TopupSaldo: React.FC<TopupSaldoProps> = ({ user }) => {
                             </tr>
                         ))
                     ) : (
-                        <tr><td colSpan={6} className="px-6 py-12 text-center text-slate-400">Tidak ada data ditemukan.</td></tr>
+                        <tr><td colSpan={5} className="px-6 py-12 text-center text-slate-400">Tidak ada data ditemukan.</td></tr>
                     )}
                     </tbody>
                 </table>
