@@ -83,7 +83,8 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess, setIsGlobalProcessing 
 
   const cleanStr = (str: string) => {
       if (!str) return '';
-      return str.replace(/^"|"$/g, '').replace(/^'|'$/g, '').trim();
+      // Remove leading single quote often found in Excel exports, then trim quotes and whitespace
+      return str.replace(/^'/, '').replace(/^"|"$/g, '').replace(/^'|'$/g, '').trim();
   };
 
   const parseCSVLine = (text: string, separator: string): string[] => {
@@ -200,6 +201,19 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess, setIsGlobalProcessing 
                             nama_outlet: parts[7] || '-', tap: parts[8] || '-'
                         });
                     }
+                } else if (mode === 'update') {
+                     // Fallback Order: SN, Date, Digi, Outlet, Price, TrxID
+                     if (parts[0]) {
+                        const priceStr = parts[4] ? parts[4].replace(/[^0-9]/g, '') : '0';
+                        items.push({
+                            sn_number: parts[0],
+                            sellthru_date: parts[1] || new Date().toISOString().split('T')[0],
+                            id_digipos: parts[2],
+                            nama_outlet: parts[3],
+                            price: priceStr ? parseInt(priceStr) : 0,
+                            transaction_id: parts[5]
+                        });
+                     }
                 }
             }
             return items;
@@ -363,12 +377,21 @@ const InputForm: React.FC<InputFormProps> = ({ onSuccess, setIsGlobalProcessing 
         }
 
         // --- RETRY WITH BLIND MODE IF FAILED ---
-        if (finalParsedItems.length === 0 && uploadMode === 'adisti') {
-            finalParsedItems = tryBlindParse(';', 'adisti');
-            if (finalParsedItems.length > 0) addLog("Blind Parse (;) berhasil.");
-            else {
-                finalParsedItems = tryBlindParse(',', 'adisti');
-                 if (finalParsedItems.length > 0) addLog("Blind Parse (,) berhasil.");
+        if (finalParsedItems.length === 0) {
+            if (uploadMode === 'adisti') {
+                finalParsedItems = tryBlindParse(';', 'adisti');
+                if (finalParsedItems.length > 0) addLog("Blind Parse (;) berhasil.");
+                else {
+                    finalParsedItems = tryBlindParse(',', 'adisti');
+                     if (finalParsedItems.length > 0) addLog("Blind Parse (,) berhasil.");
+                }
+            } else if (uploadMode === 'update') {
+                 finalParsedItems = tryBlindParse(';', 'update');
+                 if (finalParsedItems.length > 0) addLog("Blind Parse (;) berhasil.");
+                 else {
+                     finalParsedItems = tryBlindParse(',', 'update');
+                     if (finalParsedItems.length > 0) addLog("Blind Parse (,) berhasil.");
+                 }
             }
         }
 

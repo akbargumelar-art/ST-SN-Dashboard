@@ -189,6 +189,7 @@ app.post('/api/sellthru/bulk', authenticateToken, async (req, res) => {
         }
 
         // 2. Fetch Master Details (Sales, Product, Tap, Flag) from serial_numbers
+        // Try to match as many as possible
         const [masterRows] = await connection.query(
             'SELECT sn_number, product_name, salesforce_name, tap, flag FROM serial_numbers WHERE sn_number IN (?)',
             [snList]
@@ -200,22 +201,31 @@ app.post('/api/sellthru/bulk', authenticateToken, async (req, res) => {
         const insertValues = [];
         const updateSNs = [];
 
-        // 3. Prepare Insert Data
+        // 3. Prepare Insert Data (ALWAYS INSERT, even if orphan)
         for (const item of items) {
-            const master = masterMap.get(item.sn_number);
-            if (master) {
-                insertValues.push([
-                    item.sn_number,
-                    item.sellthru_date || new Date().toISOString().split('T')[0],
-                    item.id_digipos || '-',
-                    item.nama_outlet || '-',
-                    item.price || 0,
-                    item.transaction_id || '-',
-                    master.product_name || 'Unknown',
-                    master.salesforce_name || 'Unknown',
-                    master.tap || 'Unknown',
-                    master.flag || '-'
-                ]);
+            // Check if exist in master, otherwise use defaults
+            const master = masterMap.get(item.sn_number) || {
+                product_name: 'Unknown Item',
+                salesforce_name: 'Unknown Sales',
+                tap: 'Unknown Tap',
+                flag: '-'
+            };
+
+            insertValues.push([
+                item.sn_number,
+                item.sellthru_date || new Date().toISOString().split('T')[0],
+                item.id_digipos || '-',
+                item.nama_outlet || '-',
+                item.price || 0,
+                item.transaction_id || '-',
+                master.product_name,
+                master.salesforce_name,
+                master.tap,
+                master.flag
+            ]);
+
+            // Only mark as Success ST in master if it actually exists in master
+            if (masterMap.has(item.sn_number)) {
                 updateSNs.push(item.sn_number);
             }
         }
@@ -228,8 +238,10 @@ app.post('/api/sellthru/bulk', authenticateToken, async (req, res) => {
                 VALUES ?
             `;
             await connection.query(insertQuery, [insertValues]);
-
-            // 5. Update Status in serial_numbers
+        }
+        
+        if (updateSNs.length > 0) {
+             // 5. Update Status in serial_numbers
             const updateQuery = `UPDATE serial_numbers SET status = 'Sukses ST' WHERE sn_number IN (?)`;
             await connection.query(updateQuery, [updateSNs]);
         }
